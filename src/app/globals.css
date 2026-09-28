@@ -256,3 +256,81 @@ h2 {
   font-weight: 600;
   color: var(--muted);
 }
+
+/* Meetings */
+
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin: 1.5rem 0 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.tabs a {
+  padding: 0.5rem 0.75rem;
+  text-decoration: none;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.tabs a[aria-current="page"] {
+  color: var(--foreground);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+}
+
+a.button {
+  display: inline-block;
+  text-decoration: none;
+}
+
+.meeting-form {
+  max-width: 44rem;
+}
+
+.meeting-form h2 {
+  margin: 1rem 0 0;
+}
+
+.meeting-form .add-row {
+  grid-template-columns: minmax(12rem, 1fr) auto;
+  margin-bottom: 0;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.details {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.5rem 1.5rem;
+  max-width: 44rem;
+  margin-bottom: 2rem;
+}
+
+.details dt {
+  color: var(--muted);
+}
+
+.multiline {
+  white-space: pre-wrap;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.0625rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.copy-emails {
+  margin-top: 1rem;
+}

@@ -147,3 +147,74 @@ export const groupMembership = sqliteTable(
     index("group_membership_member_id_idx").on(t.memberId),
   ],
 );
+
+/**
+ * A Meeting. The start is a UTC instant plus the Organiser's timezone copied
+ * when the row was created, which is how it is shown from then on (ADR 0002).
+ */
+export const meeting = sqliteTable(
+  "meeting",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organiserId: text("organiser_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    /** Set for one occurrence of a Meeting Series; its foreign key comes with that table. */
+    seriesId: text("series_id"),
+    occurrenceIndex: integer("occurrence_index"),
+    title: text("title").notNull(),
+    startAt: integer("start_at", { mode: "timestamp_ms" }).notNull(),
+    timezone: text("timezone").notNull(),
+    durationMinutes: integer("duration_minutes"),
+    location: text("location"),
+    notes: text("notes"),
+    privateNotes: text("private_notes"),
+    /** Set by the catch-up step once the start has passed (ADR 0001). */
+    finalisedAt: integer("finalised_at", { mode: "timestamp_ms" }),
+    ...timestamps,
+  },
+  (t) => [
+    unique().on(t.organiserId, t.id),
+    unique().on(t.seriesId, t.occurrenceIndex),
+    index("meeting_organiser_id_start_at_idx").on(t.organiserId, t.startAt),
+    index("meeting_organiser_id_finalised_at_start_at_idx").on(
+      t.organiserId,
+      t.finalisedAt,
+      t.startAt,
+    ),
+  ],
+);
+
+/**
+ * Members chosen individually for a Meeting, whether added one by one or
+ * copied from a Linked Group. The composite foreign keys make the database
+ * refuse one Organiser's Meeting with another's Member.
+ */
+export const meetingMember = sqliteTable(
+  "meeting_member",
+  {
+    organiserId: text("organiser_id").notNull(),
+    meetingId: text("meeting_id").notNull(),
+    memberId: text("member_id").notNull(),
+    /** Single-column so a Group delete nulls only this. */
+    copiedFromGroupId: text("copied_from_group_id").references(
+      () => memberGroup.id,
+      { onDelete: "set null" },
+    ),
+    ...timestamps,
+  },
+  (t) => [
+    primaryKey({ columns: [t.meetingId, t.memberId] }),
+    foreignKey({
+      columns: [t.organiserId, t.meetingId],
+      foreignColumns: [meeting.organiserId, meeting.id],
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [t.organiserId, t.memberId],
+      foreignColumns: [member.organiserId, member.id],
+    }).onDelete("cascade"),
+    index("meeting_member_member_id_idx").on(t.memberId),
+  ],
+);

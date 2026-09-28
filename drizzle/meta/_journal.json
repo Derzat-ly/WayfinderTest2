@@ -22,6 +22,13 @@
       "when": 1790595361678,
       "tag": "0002_group",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1790596430014,
+      "tag": "0003_meeting",
+      "breakpoints": true
     }
   ]
 }
