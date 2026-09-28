@@ -29,6 +29,7 @@ describe("Meetings", () => {
       location: null,
       notes: null,
       privateNotes: null,
+      started: false,
       linkedGroups: [],
       attendees: [],
     });

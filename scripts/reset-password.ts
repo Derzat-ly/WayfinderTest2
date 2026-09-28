@@ -25,7 +25,8 @@ async function main() {
     db,
     baseURL: process.env.BETTER_AUTH_URL ?? DEFAULT_BASE_URL,
   });
-  const operator = createOperator({ auth });
+  const operator = createOperator({ auth, db });
+  await operator.catchUpAll();
 
   try {
     const temporaryPassword = await operator.resetPassword(email);

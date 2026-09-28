@@ -71,24 +71,38 @@ export default async function MeetingPage({
       </dl>
 
       <h2>Attendees</h2>
-      <div className="add-rows">
-        <AddAttendeeForm meetingId={meeting.id} candidates={candidates} />
-        <AddGroupForm meetingId={meeting.id} candidates={groupCandidates} />
-      </div>
-      <LinkedGroupChips
-        groups={meeting.linkedGroups}
-        removeControl={(groupId, name) => (
-          <form action={unlinkGroup.bind(null, meeting.id, groupId)}>
-            <button aria-label={`Remove the Group ${name}`}>×</button>
-          </form>
-        )}
-      />
-      <AttendeeTable
-        attendees={meeting.attendees}
-        removeControl={(attendee) => (
-          <RemoveAttendeeButton meetingId={meeting.id} attendee={attendee} />
-        )}
-      />
+      {meeting.started ? (
+        <>
+          <p className="hint">
+            This Meeting has started, so its Attendees are a fixed record of
+            who was on it and their details at the start. Later changes to
+            Members or Groups don&apos;t change it.
+          </p>
+          <LinkedGroupChips groups={meeting.linkedGroups} />
+          <AttendeeTable attendees={meeting.attendees} />
+        </>
+      ) : (
+        <>
+          <div className="add-rows">
+            <AddAttendeeForm meetingId={meeting.id} candidates={candidates} />
+            <AddGroupForm meetingId={meeting.id} candidates={groupCandidates} />
+          </div>
+          <LinkedGroupChips
+            groups={meeting.linkedGroups}
+            removeControl={(groupId, name) => (
+              <form action={unlinkGroup.bind(null, meeting.id, groupId)}>
+                <button aria-label={`Remove the Group ${name}`}>×</button>
+              </form>
+            )}
+          />
+          <AttendeeTable
+            attendees={meeting.attendees}
+            removeControl={(attendee) => (
+              <RemoveAttendeeButton meetingId={meeting.id} attendee={attendee} />
+            )}
+          />
+        </>
+      )}
       {meeting.attendees.length > 0 && (
         <CopyEmailsButton emails={meeting.attendees.map((a) => a.email)} />
       )}

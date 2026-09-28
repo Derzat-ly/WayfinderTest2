@@ -247,3 +247,41 @@ export const meetingMember = sqliteTable(
     index("meeting_member_member_id_idx").on(t.memberId),
   ],
 );
+
+/**
+ * A started Meeting's Attendees: the fixed record the catch-up step writes
+ * when it finalises the Meeting (ADR 0001), untouched by later edits.
+ */
+export const attendee = sqliteTable(
+  "attendee",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organiserId: text("organiser_id").notNull(),
+    meetingId: text("meeting_id").notNull(),
+    /** Single-column so a Member delete nulls only this: NULL is a deleted Member. */
+    memberId: text("member_id").references(() => member.id, {
+      onDelete: "set null",
+    }),
+    name: text("name").notNull(),
+    email: text("email").notNull(),
+    phone: text("phone"),
+    /** How the Member was added; the first of individual, copy, linked that applies. */
+    addedVia: text("added_via", {
+      enum: ["individual", "copy", "linked"],
+    }).notNull(),
+    viaLinkId: text("via_link_id").references(() => meetingLinkedGroup.id, {
+      onDelete: "set null",
+    }),
+    ...timestamps,
+  },
+  (t) => [
+    unique().on(t.meetingId, t.memberId),
+    foreignKey({
+      columns: [t.organiserId, t.meetingId],
+      foreignColumns: [meeting.organiserId, meeting.id],
+    }).onDelete("cascade"),
+    index("attendee_member_id_idx").on(t.memberId),
+  ],
+);

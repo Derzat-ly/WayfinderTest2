@@ -1,6 +1,6 @@
 "use client";
 
-import type { Attendee } from "@/data/organiser-data";
+import type { LiveAttendee } from "@/data/organiser-data";
 import { removeAttendee } from "../actions";
 
 /**
@@ -12,7 +12,7 @@ export function RemoveAttendeeButton({
   attendee,
 }: {
   meetingId: string;
-  attendee: Attendee;
+  attendee: LiveAttendee;
 }) {
   const linked = attendee.addedVia === "linked";
 
