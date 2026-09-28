@@ -1,0 +1,568 @@
+<!doctype html>
+<!--
+  PROTOTYPE: throwaway. Do not build on this code.
+  Question: "What should the core screens and flows look like?" (Wayfinder ticket, GitHub issue #9)
+  Plan: three structurally different variants of the whole Organiser surface (Members, Groups,
+  Meetings, Meeting setup), switchable via ?variant=A|B|C and the floating bottom bar (or ← →).
+  All variants share one in-memory model implementing the settled rules:
+    - Attendees = Members of Linked Groups + copied Members + individually added Members, no duplicates
+    - Removing a Member of a Linked Group turns that link into a one-off copy (warned first)
+    - Links freeze at start time; a Meeting Series copies its choices (links included) to each Meeting
+  No persistence: reload resets everything. Open this file in a browser; nothing to install.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PROTOTYPE: Group Meetings core screens</title>
+<style>
+  :root { --ink:#1c1f24; --muted:#6b7280; --line:#e3e5e8; --bg:#f7f7f5; --card:#fff; --accent:#2f5bea; --live:#0f7b4f; --copy:#9a5b00; --fog:#7c3aed; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; color:var(--ink); background:var(--bg); }
+  button { font:inherit; cursor:pointer; border:1px solid var(--line); background:#fff; border-radius:6px; padding:5px 10px; }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button.link { border:0; background:none; color:var(--accent); padding:0; }
+  input, select, textarea { font:inherit; border:1px solid #cfd3d8; border-radius:6px; padding:6px 8px; background:#fff; }
+  textarea { width:100%; min-height:50px; }
+  label { display:block; margin:8px 0; font-weight:500; }
+  label input:not([type=checkbox]), label textarea, label select { display:block; width:100%; margin-top:3px; font-weight:400; }
+  label.check { display:flex; gap:6px; align-items:center; }
+  .row { display:flex; gap:10px; align-items:end; flex-wrap:wrap; }
+  .row > label { flex:1; min-width:120px; }
+  .muted { color:var(--muted); font-weight:400; }
+  .small { font-size:12px; }
+  .fog { color:var(--fog); border:1px dashed #c4b5fd; background:#faf5ff; padding:4px 8px; border-radius:6px; font-size:12px; }
+  .note { background:#eef2ff; padding:6px 10px; border-radius:6px; }
+  .warn { color:#b45309; }
+  .b { display:inline-block; font-size:11px; padding:1px 6px; border-radius:10px; background:#eef0f3; margin:1px 2px 1px 0; white-space:nowrap; }
+  .b.live { background:#dcfce7; color:var(--live); }
+  .b.copy { background:#fef3c7; color:var(--copy); }
+  .b.ind { background:#e0e7ff; color:#3730a3; }
+  .chip { display:inline-flex; gap:6px; align-items:center; border-radius:14px; padding:3px 4px 3px 10px; margin:3px; font-size:13px; }
+  .chip.live { background:#dcfce7; color:var(--live); }
+  .chip.copy { background:#fef3c7; color:var(--copy); }
+  .chip button { border:0; background:transparent; padding:0 6px; }
+  table { border-collapse:collapse; width:100%; }
+  th, td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { font-size:12px; color:var(--muted); font-weight:500; }
+  tr.click:hover { background:#f3f4f6; cursor:pointer; }
+
+  /* ---------- Variant A: sidebar & pages ---------- */
+  .va { display:flex; min-height:100vh; }
+  .va aside { width:200px; background:#1f2430; color:#e5e7eb; padding:16px 10px; display:flex; flex-direction:column; gap:4px; }
+  .va aside .logo { font-weight:700; padding:4px 10px 16px; }
+  .va aside button { background:none; border:0; color:#cbd5e1; text-align:left; padding:8px 10px; }
+  .va aside button.on { background:#343b4c; color:#fff; }
+  .va aside .who { margin-top:auto; padding:10px; font-size:12px; }
+  .va main { flex:1; padding:24px 36px 120px; max-width:980px; }
+  .va header { display:flex; justify-content:space-between; align-items:center; }
+  .va h1 { margin:0 0 12px; font-size:22px; }
+  .va h2 { font-size:16px; margin:24px 0 8px; }
+  .va .tabs { display:flex; gap:4px; margin:6px 0 10px; }
+  .va .tabs button.on { background:var(--ink); color:#fff; }
+  .va .form { max-width:620px; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px 16px; }
+  .va .picker { display:flex; gap:16px; flex-wrap:wrap; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px 12px; }
+  .va .picker > div { flex:1; min-width:220px; }
+  .va .picker select { width:100%; }
+  .va dl.grid { display:grid; grid-template-columns:130px 1fr; gap:6px 12px; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px; }
+  .va dt { color:var(--muted); }
+  .va dd { margin:0; }
+  .va .addrow { display:flex; gap:6px; margin:8px 0; flex-wrap:wrap; }
+
+  /* ---------- Variant B: people columns + meeting tray ---------- */
+  .vb { height:100vh; display:flex; flex-direction:column; }
+  .vb .top { display:flex; gap:16px; align-items:center; padding:10px 16px; background:#fff; border-bottom:1px solid var(--line); }
+  .vb .strip { flex:1; display:flex; gap:6px; overflow-x:auto; }
+  .vb .mchip { display:flex; flex-direction:column; align-items:flex-start; min-width:150px; font-size:12px; }
+  .vb .mchip span { color:var(--muted); font-size:11px; }
+  .vb .mchip.on { border-color:var(--accent); box-shadow:0 0 0 2px #c7d2fe; }
+  .vb .cols { flex:1; display:grid; grid-template-columns:230px 1fr 400px; min-height:0; }
+  .vb section { overflow:auto; padding:12px 14px 110px; border-right:1px solid var(--line); }
+  .vb .c3 { background:#fff; border-right:0; }
+  .vb h3 { margin:4px 0 10px; font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+  .vb .grow { display:flex; align-items:center; gap:6px; padding:5px 6px; border-radius:6px; }
+  .vb .grow.on { background:#e0e7ff; }
+  .vb .grow .name { flex:1; cursor:pointer; }
+  .vb .mrow { display:flex; gap:8px; align-items:center; padding:6px; border-bottom:1px solid var(--line); background:#fff; }
+  .vb .mrow .who { flex:1; }
+  .vb .target { background:#fff7ed; border:1px solid #fed7aa; padding:6px 10px; border-radius:6px; font-size:12px; margin-bottom:10px; }
+
+  /* ---------- Variant C: agenda + wizard + people drawer ---------- */
+  .vc > header { display:flex; justify-content:space-between; align-items:center; max-width:680px; margin:0 auto; padding:24px 16px 8px; }
+  .vc h1 { font-size:24px; margin:0; }
+  .vc .col { max-width:680px; margin:0 auto; padding:0 16px 140px; }
+  .vc .week { margin:22px 0 6px; font-size:12px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+  .vc .ev { display:flex; gap:14px; background:#fff; border:1px solid var(--line); border-radius:10px; padding:12px; margin:6px 0; cursor:pointer; }
+  .vc .ev:hover { border-color:#9ca3af; }
+  .vc .day { width:48px; text-align:center; }
+  .vc .day b { display:block; font-size:22px; line-height:1; }
+  .vc .steps { display:flex; gap:6px; margin:16px 0; }
+  .vc .steps span { flex:1; padding:6px; text-align:center; border-bottom:3px solid var(--line); color:var(--muted); }
+  .vc .steps span.on { border-color:var(--accent); color:var(--ink); font-weight:600; }
+  .vc .cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:8px; }
+  .vc .gcard { text-align:left; padding:10px; border-radius:10px; background:#fff; }
+  .vc .gcard.on { border:2px solid var(--live); background:#f0fdf4; }
+  .vc .sec { background:#fff; border:1px solid var(--line); border-radius:10px; margin:10px 0; }
+  .vc .sec > div:first-child { padding:8px 12px; border-bottom:1px solid var(--line); font-weight:600; }
+  .vc .prow { display:flex; justify-content:space-between; padding:6px 12px; border-bottom:1px solid #f1f2f4; }
+  .vc .drawer { position:fixed; top:0; right:0; bottom:0; width:380px; background:#fff; box-shadow:-8px 0 30px rgba(0,0,0,.15); padding:16px; overflow:auto; z-index:5; }
+  .vc .drawer .tabs button.on { background:var(--ink); color:#fff; }
+  .vc .actions { display:flex; justify-content:space-between; margin-top:16px; }
+
+  /* ---------- prototype chrome (not part of the design) ---------- */
+  #switcher { position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:#111; color:#fff; border-radius:999px; padding:6px 8px; display:flex; gap:8px; align-items:center; box-shadow:0 6px 24px rgba(0,0,0,.35); z-index:10; font-size:13px; }
+  #switcher button { background:#333; color:#fff; border:0; border-radius:999px; width:30px; height:30px; padding:0; }
+  #switcher span { min-width:250px; text-align:center; }
+  #state { position:fixed; left:12px; bottom:12px; width:390px; max-height:55vh; overflow:auto; background:#0b1020; color:#d1d5db; border-radius:8px; font:12px/1.4 ui-monospace, Consolas, monospace; z-index:9; box-shadow:0 6px 24px rgba(0,0,0,.3); }
+  #state summary { padding:8px 10px; cursor:pointer; color:#fff; }
+  #state .body { padding:0 10px 10px; }
+  #state .log div { border-left:2px solid #4f46e5; padding-left:6px; margin:3px 0; }
+  #state table td, #state table th { border-color:#1f2937; padding:3px 4px; color:#d1d5db; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<details id="state"><summary>Prototype state &amp; event log</summary><div class="body" id="statebody"></div></details>
+<div id="switcher"><button onclick="X.cycle(-1)" title="Previous variant (←)">‹</button><span id="vlabel"></span><button onclick="X.cycle(1)" title="Next variant (→)">›</button></div>
+
+<script>
+// ================= shared in-memory model =================
+const NOW = new Date('2026-09-28T12:00');
+const WINDOW = 4; // rolling window of Series Meetings (size is a build detail)
+let uid = 100; const nid = p => p + (uid++);
+const pad = n => String(n).padStart(2, '0');
+const toStr = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+const fmt = s => new Date(s).toLocaleString('en-GB', {weekday:'short', day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
+const fmtShort = s => new Date(s).toLocaleString('en-GB', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
+const ordinal = n => n + (['th','st','nd','rd'][(n%100-20)%10] || ['th','st','nd','rd'][n%100] || 'th');
+const h = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+const names = ['Priya Shah','Tom Becker','Aisha Khan','Ben Walsh','Chloe Martin','Dev Patel','Ella Nowak','Finn O\'Neill','Grace Liu','Hugo Silva','Imogen Reed','Jonas Berg'];
+const S = {
+  organiser: { name:'Sam Ortiz', tz:'Europe/London' },
+  members: names.map((n, i) => ({ id:'p'+i, name:n, email:n.split(' ')[0].toLowerCase().replace("'", '') + '@example.com' })),
+  groups: [
+    { id:'g1', name:'Book club', memberIds:['p0','p1','p2','p4','p8'] },
+    { id:'g2', name:'Allotment committee', memberIds:['p1','p3','p5','p9'] },
+    { id:'g3', name:'Choir altos', memberIds:['p2','p6','p7','p8','p10'] },
+    { id:'g4', name:"Parents' rota", memberIds:['p4','p5','p11','p0'] },
+  ],
+  series: [], meetings: [], log: [],
+};
+const M = id => S.members.find(x => x.id === id);
+const G = id => S.groups.find(x => x.id === id);
+const MT = id => S.meetings.find(x => x.id === id);
+const isPast = m => new Date(m.start) < NOW;
+const byStart = (desc) => (a, b) => desc ? b.start.localeCompare(a.start) : a.start.localeCompare(b.start);
+function log(msg) { S.log.push(msg); }
+
+// Attendees = Linked Groups' current Members + copied Members + individuals, no one twice.
+function attendees(m) {
+  if (m.frozen) return m.frozen.map(id => ({ member:M(id), sources:['fixed at start'] }));
+  const map = new Map();
+  const add = (id, src) => { if (!M(id)) return; if (!map.has(id)) map.set(id, []); map.get(id).push(src); };
+  m.links.forEach(g => G(g).memberIds.forEach(id => add(id, { kind:'link', group:g })));
+  m.copies.forEach(c => c.memberIds.forEach(id => add(id, { kind:'copy', group:c.groupId })));
+  m.individuals.forEach(id => add(id, { kind:'ind' }));
+  return [...map].map(([id, sources]) => ({ member:M(id), sources })).sort((a, b) => a.member.name.localeCompare(b.member.name));
+}
+function removeWarning(m, id) {
+  const gs = m.links.filter(g => G(g).memberIds.includes(id));
+  if (!gs.length) return '';
+  return `${M(id).name} is here through the Linked Group ${gs.map(g => G(g).name).join(' and ')}. Removing them turns ${gs.length > 1 ? 'those links' : 'that link'} into a one-off copy for this Meeting only: later changes to the Group won't reach it.`;
+}
+function removeAttendee(m, id) {
+  const w = removeWarning(m, id);
+  if (w && !confirm(w + '\n\nRemove anyway?')) return false;
+  const gs = m.links.filter(g => G(g).memberIds.includes(id));
+  gs.forEach(g => m.copies.push({ groupId:g, memberIds:G(g).memberIds.filter(x => x !== id) }));
+  m.links = m.links.filter(g => !gs.includes(g));
+  m.individuals = m.individuals.filter(x => x !== id);
+  m.copies.forEach(c => c.memberIds = c.memberIds.filter(x => x !== id));
+  if (m.seriesId) m.changed = true;
+  log(`Removed ${M(id).name} from "${m.title || 'draft'}"` + (gs.length ? ` → link to ${gs.map(g => G(g).name).join(', ')} became a copy` : ''));
+  return true;
+}
+function upcomingLinking(gid) { return S.meetings.filter(m => !isPast(m) && m.links.includes(gid)); }
+function setMembership(gid, mid, on) {
+  const g = G(gid);
+  const before = new Map(upcomingLinking(gid).map(m => [m.id, attendees(m).length]));
+  if (on && !g.memberIds.includes(mid)) g.memberIds.push(mid);
+  if (!on) g.memberIds = g.memberIds.filter(x => x !== mid);
+  const hit = upcomingLinking(gid).filter(m => attendees(m).length !== before.get(m.id));
+  log(`${M(mid).name} ${on ? 'joined' : 'left'} ${g.name}` + (hit.length
+    ? ` → ${on ? 'now on' : 'dropped from'} ${hit.length} upcoming Meeting(s): ${hit.map(m => m.title + ' ' + fmtShort(m.start)).join('; ')}`
+    : ' → no upcoming Meeting changed (not linked, or covered another way)'));
+}
+function addMember(name, email, gid) {
+  const id = nid('p'); S.members.push({ id, name, email });
+  log(`Added Member ${name}`);
+  if (gid) setMembership(gid, id, true);
+  return id;
+}
+function addGroup(name) { const id = nid('g'); S.groups.push({ id, name, memberIds:[] }); log(`Created Group ${name}`); return id; }
+
+// Meeting Series: open-ended repeat rule; each occurrence is its own Meeting copied from the Series.
+function occurrence(sr, k) {
+  const b = new Date(sr.start), n = sr.every * k, d = new Date(b);
+  if (sr.unit === 'day') d.setDate(d.getDate() + n);
+  else if (sr.unit === 'week') d.setDate(d.getDate() + 7*n);
+  else if (sr.unit === 'year') d.setFullYear(d.getFullYear() + n);
+  else if (sr.monthly === 'date') return toStr(new Date(b.getFullYear(), b.getMonth()+n, b.getDate(), b.getHours(), b.getMinutes()));
+  else {
+    const pos = Math.ceil(b.getDate()/7), wd = b.getDay();
+    const f = new Date(b.getFullYear(), b.getMonth()+n, 1, b.getHours(), b.getMinutes());
+    f.setDate(1 + ((wd - f.getDay() + 7) % 7) + 7*(pos-1));
+    return toStr(f);
+  }
+  return toStr(d);
+}
+function repeatText(sr) {
+  const b = new Date(sr.start);
+  let t = 'Every ' + (sr.every == 1 ? sr.unit : sr.every + ' ' + sr.unit + 's');
+  if (sr.unit === 'week') t += ' on ' + b.toLocaleDateString('en-GB', {weekday:'long'});
+  if (sr.unit === 'month') t += sr.monthly === 'date' ? ` on the ${ordinal(b.getDate())}` : ` on the ${ordinal(Math.ceil(b.getDate()/7))} ${b.toLocaleDateString('en-GB', {weekday:'long'})}`;
+  return t + ', no end date';
+}
+const cloneChoices = c => ({ links:[...c.links], copies:c.copies.map(x => ({ groupId:x.groupId, memberIds:[...x.memberIds] })), individuals:[...c.individuals] });
+function spawnSeries(sr) {
+  for (let k = 0; k < WINDOW; k++) S.meetings.push({ id:nid('m'), seriesId:sr.id, title:sr.title, start:occurrence(sr, k), duration:sr.duration,
+    location:sr.location, notes:sr.notes, privateNotes:sr.privateNotes, ...cloneChoices(sr) });
+}
+function newDraft() { return { title:'', date:'2026-10-15', time:'19:00', duration:'60', location:'', notes:'', privateNotes:'', repeat:false, every:1, unit:'week', monthly:'date', links:[], copies:[], individuals:[] }; }
+function createFromDraft(d) {
+  const base = { title:d.title || 'Untitled meeting', start:d.date + 'T' + d.time, duration:d.duration ? +d.duration : null,
+    location:d.location, notes:d.notes, privateNotes:d.privateNotes, ...cloneChoices(d) };
+  if (d.repeat) {
+    const sr = { id:nid('s'), ...base, every:+d.every || 1, unit:d.unit, monthly:d.monthly };
+    S.series.push(sr); spawnSeries(sr);
+    log(`Created Meeting Series "${sr.title}" (${repeatText(sr)}) → ${WINDOW} Meetings in the rolling window, each with its own copy of the links`);
+    return S.meetings.find(m => m.seriesId === sr.id);
+  }
+  const m = { id:nid('m'), seriesId:null, ...base };
+  S.meetings.push(m); log(`Created Meeting "${m.title}" with ${attendees(m).length} Attendees`);
+  return m;
+}
+
+// seed data
+(function seed() {
+  const sr = { id:'s1', title:'Book club', start:'2026-10-08T19:30', duration:90, location:'The Crown, back room', notes:'Bring the book!', privateNotes:'',
+    every:1, unit:'month', monthly:'weekday', links:['g1'], copies:[], individuals:[] };
+  S.series.push(sr); spawnSeries(sr);
+  S.meetings.push({ id:'m1', seriesId:null, title:'Allotment AGM', start:'2026-10-11T10:00', duration:60, location:'Plot 14 shed', notes:'', privateNotes:'Ask Hugo about the water bill',
+    links:['g2'], copies:[], individuals:['p11'] });
+  S.meetings.push({ id:'m2', seriesId:null, title:'Choir × book club social', start:'2026-10-24T18:00', duration:null, location:'https://meet.example.com/social', notes:'Drinks and a sing-song',
+    privateNotes:'', links:['g1','g3'], copies:[], individuals:[] });
+  S.meetings.push({ id:'m3', seriesId:null, title:'September rota handover', start:'2026-09-14T08:30', duration:30, location:'School gate', notes:'', privateNotes:'',
+    links:['g4'], copies:[], individuals:[], frozen:['p0','p4','p5','p11'] });
+  S.log = ['Seeded: 12 Members, 4 Groups, 1 Meeting Series (monthly, 2nd Thursday), 3 Meetings. "Today" is Mon 28 Sep 2026.'];
+})();
+
+// ================= shared bits (not layout) =================
+function badges(sources) {
+  return sources.map(s => typeof s === 'string' ? `<span class="b">${h(s)}</span>`
+    : s.kind === 'link' ? `<span class="b live">${h(G(s.group).name)} · live</span>`
+    : s.kind === 'copy' ? `<span class="b copy">${h(G(s.group).name)} · copy</span>`
+    : `<span class="b ind">added individually</span>`).join('');
+}
+function flatList(t, ctx) {
+  const list = attendees(t);
+  if (!list.length) return '<p class="muted">No Attendees yet.</p>';
+  return `<table><tr><th>Attendee</th><th>Why they're on it</th><th></th></tr>${list.map(a => {
+    const w = removeWarning(t, a.member.id);
+    return `<tr><td>${h(a.member.name)}<div class="muted small">${h(a.member.email)}</div></td><td>${badges(a.sources)}</td>
+      <td>${t.frozen ? '' : `<button class="link" title="${h(w)}" onclick="X.remove('${ctx}','${a.member.id}')">Remove${w ? ' <span class=warn>⚠</span>' : ''}</button>`}</td></tr>`; }).join('')}</table>`;
+}
+function detailFields(k) {
+  const d = VS[k].draft, b = f => `oninput="VS.${k}.draft.${f}=this.value"`;
+  const opt = (v, cur, l) => `<option value="${v}" ${String(v) === String(cur) ? 'selected' : ''}>${l}</option>`;
+  return `<label>Title <input value="${h(d.title)}" ${b('title')} placeholder="e.g. Autumn planning"></label>
+  <div class="row"><label>Date <input type="date" value="${d.date}" ${b('date')} onchange="render()"></label>
+    <label>Start time <input type="time" value="${d.time}" ${b('time')}></label>
+    <label>Duration <span class="muted">(optional)</span><select onchange="VS.${k}.draft.duration=this.value">${[['','none'],[30,'30 min'],[45,'45 min'],[60,'1 hour'],[90,'1½ hours'],[120,'2 hours']].map(([v,l]) => opt(v, d.duration, l)).join('')}</select></label></div>
+  <div class="muted small">Times are in your timezone (${h(S.organiser.tz)}). There is no end time.</div>
+  <label>Location <span class="muted">(address, room or video link)</span><input value="${h(d.location)}" ${b('location')}></label>
+  <label>Notes for Attendees <textarea ${b('notes')}>${h(d.notes)}</textarea></label>
+  <label>Private notes <span class="muted">(only you see these)</span><textarea ${b('privateNotes')}>${h(d.privateNotes)}</textarea></label>
+  <label class="check"><input type="checkbox" ${d.repeat ? 'checked' : ''} onchange="VS.${k}.draft.repeat=this.checked;render()"> Repeats (makes a Meeting Series)</label>
+  ${d.repeat ? `<div class="row" style="align-items:center">Every <input type="number" min="1" value="${d.every}" style="width:4em" ${b('every')}>
+    <select onchange="VS.${k}.draft.unit=this.value;render()">${['day','week','month','year'].map(u => opt(u, d.unit, u + '(s)')).join('')}</select>
+    ${d.unit === 'month' ? `<select onchange="VS.${k}.draft.monthly=this.value">${opt('date', d.monthly, 'on the same date')}${opt('weekday', d.monthly, 'on the same weekday (e.g. 2nd Tue)')}</select>` : ''}
+    <span class="muted small">No end date: it runs until you end it.</span></div>` : ''}`;
+}
+
+// ================= Variant A: sidebar & pages =================
+const VA = {
+  name:'Sidebar & pages',
+  render() {
+    const v = VS.A, sec = { meeting:'meetings', newMeeting:'meetings', member:'members', group:'groups' }[v.screen] || v.screen;
+    return `<div class="va"><aside><div class="logo">Group Meetings</div>
+      ${[['meetings','Meetings'],['members','Members'],['groups','Groups'],['settings','Settings']].map(([k, l]) => `<button class="${sec === k ? 'on' : ''}" onclick="X.go('A','${k}')">${l}</button>`).join('')}
+      <div class="who">${h(S.organiser.name)}<br><span style="opacity:.7">${h(S.organiser.tz)}</span></div></aside><main>${VA[v.screen]()}</main></div>`;
+  },
+  back: (s, l) => `<p><button class="link" onclick="X.go('A','${s}')">← ${l}</button></p>`,
+  meetings() {
+    const past = VS.A.tab === 'past', list = S.meetings.filter(m => isPast(m) === past).sort(byStart(past));
+    return `<header><h1>Meetings</h1><button class="primary" onclick="X.newDraft('A');X.go('A','newMeeting')">New meeting</button></header>
+    <div class="tabs"><button class="${past ? '' : 'on'}" onclick="VS.A.tab='up';render()">Upcoming</button><button class="${past ? 'on' : ''}" onclick="VS.A.tab='past';render()">Past</button></div>
+    ${past ? '<p class="fog">Past Meetings (history, archiving, what you see afterwards): not yet specified. Read-only here.</p>' : ''}
+    <table><tr><th>When</th><th>Meeting</th><th>Attendees</th><th>Where</th></tr>${list.map(m => `<tr class="click" onclick="X.go('A','meeting','${m.id}')">
+      <td>${fmt(m.start)}</td><td><b>${h(m.title)}</b> ${m.seriesId ? '<span class="b">series</span>' : ''} ${m.changed ? '<span class="b copy">changed</span>' : ''}</td>
+      <td>${attendees(m).length} <span class="muted small">${m.links.map(g => h(G(g).name)).join(', ')}</span></td><td>${h(m.location || '—')}</td></tr>`).join('')}</table>`;
+  },
+  picker(t, ctx) {
+    return `<div class="picker"><div><label>Add a whole Group <span class="muted">(stays live until the Meeting starts)</span></label>
+      <select onchange="if(this.value)X.link('${ctx}',this.value)"><option value="">Choose a Group…</option>${S.groups.filter(g => !t.links.includes(g.id)).map(g => `<option value="${g.id}">${h(g.name)} (${g.memberIds.length})</option>`).join('')}</select></div>
+      <div><label>Add one Member</label><select onchange="if(this.value)X.addInd('${ctx}',this.value)"><option value="">Choose a Member…</option>${S.members.filter(p => !t.individuals.includes(p.id)).map(p => `<option value="${p.id}">${h(p.name)}</option>`).join('')}</select></div></div>
+      <div>${t.links.map(g => `<span class="chip live">Linked: ${h(G(g).name)} <button title="Unlink Group" onclick="X.unlink('${ctx}','${g}')">×</button></span>`).join('')}
+      ${t.copies.map((c, i) => `<span class="chip copy">Copy of ${h(G(c.groupId).name)} (${c.memberIds.length}) <button onclick="X.uncopy('${ctx}',${i})">×</button></span>`).join('')}</div>`;
+  },
+  meeting() {
+    const m = MT(VS.A.sel), sr = m.seriesId && S.series.find(s => s.id === m.seriesId);
+    return `${VA.back('meetings', 'Meetings')}<h1>${h(m.title)}</h1>
+    ${sr ? `<p class="note">One Meeting in the Meeting Series “${h(sr.title)}”: ${repeatText(sr)}. ${m.changed ? '<b>This one differs from the Series.</b>' : ''}</p><p class="fog">Editing the whole Series, or ending it: not yet specified.</p>` : ''}
+    <dl class="grid"><dt>When</dt><dd>${fmt(m.start)} · ${m.duration ? m.duration + ' min' : 'no duration'}</dd><dt>Where</dt><dd>${h(m.location || '—')}</dd>
+      <dt>Notes</dt><dd>${h(m.notes || '—')}</dd><dt>Private notes</dt><dd>${h(m.privateNotes || '—')} <span class="muted small">(only you)</span></dd></dl>
+    <p class="fog">Editing details, rescheduling, cancelling, and telling Attendees: not yet specified.</p>
+    <h2>Attendees (${attendees(m).length})</h2>
+    ${isPast(m) ? '<p class="note">This Meeting has started, so its Attendee list is a fixed record.</p>' : VA.picker(m, m.id)}${flatList(m, m.id)}`;
+  },
+  newMeeting() {
+    const d = VS.A.draft;
+    return `${VA.back('meetings', 'Meetings')}<h1>New meeting</h1><div class="form">${detailFields('A')}</div>
+    <h2>Attendees (${attendees(d).length})</h2>${VA.picker(d, 'draft')}${flatList(d, 'draft')}
+    <p><button class="primary" onclick="X.create('A')">Create meeting</button></p>`;
+  },
+  members() {
+    return `<h1>Members</h1><div class="addrow"><input id="an" placeholder="Name"><input id="ae" placeholder="Email"><button onclick="X.addMember('an','ae')">Add Member</button></div>
+    <p class="fog">Which details a Member has, and editing or deleting one, are being decided in “What are a Member's details…”. Name + email assumed. Bulk import: not yet specified.</p>
+    <table><tr><th>Name</th><th>Email</th><th>Groups</th></tr>${[...S.members].sort((a, b) => a.name.localeCompare(b.name)).map(p => `<tr class="click" onclick="X.go('A','member','${p.id}')">
+      <td><b>${h(p.name)}</b></td><td>${h(p.email)}</td><td>${S.groups.filter(g => g.memberIds.includes(p.id)).map(g => `<span class="b">${h(g.name)}</span>`).join('')}</td></tr>`).join('')}</table>`;
+  },
+  member() {
+    const p = M(VS.A.sel), up = S.meetings.filter(m => !isPast(m) && attendees(m).some(a => a.member.id === p.id)).sort(byStart());
+    return `${VA.back('members', 'Members')}<h1>${h(p.name)}</h1><p class="muted">${h(p.email)}</p>
+    <h2>Groups</h2>${S.groups.map(g => `<label class="check"><input type="checkbox" ${g.memberIds.includes(p.id) ? 'checked' : ''} onchange="X.memb('${g.id}','${p.id}',this.checked)"> ${h(g.name)}</label>`).join('')}
+    <h2>Upcoming Meetings (${up.length})</h2>${up.map(m => `<div><button class="link" onclick="X.go('A','meeting','${m.id}')">${h(m.title)}</button> <span class="muted">${fmt(m.start)}</span></div>`).join('') || '<p class="muted">None.</p>'}`;
+  },
+  groups() {
+    return `<h1>Groups</h1><div class="addrow"><input id="ag" placeholder="New Group name"><button onclick="X.addGroup('ag')">Create Group</button></div>
+    <table><tr><th>Group</th><th>Members</th><th>Linked to upcoming Meetings</th></tr>${S.groups.map(g => `<tr class="click" onclick="X.go('A','group','${g.id}')">
+      <td><b>${h(g.name)}</b></td><td>${g.memberIds.length}</td><td>${upcomingLinking(g.id).length}</td></tr>`).join('')}</table>`;
+  },
+  group() {
+    const g = G(VS.A.sel), links = upcomingLinking(g.id);
+    return `${VA.back('groups', 'Groups')}<h1>${h(g.name)}</h1>
+    ${links.length ? `<p class="note">Linked to ${links.length} upcoming Meeting(s). Changes here reach them straight away.</p>` : ''}
+    <div class="addrow"><select id="agm"><option value="">Add an existing Member…</option>${S.members.filter(p => !g.memberIds.includes(p.id)).map(p => `<option value="${p.id}">${h(p.name)}</option>`).join('')}</select>
+      <button onclick="const v=document.getElementById('agm').value;if(v)X.memb('${g.id}',v,true)">Add</button>
+      <span class="muted">or new:</span><input id="agn" placeholder="Name"><input id="age" placeholder="Email"><button onclick="X.addMember('agn','age','${g.id}')">Add new</button></div>
+    <table><tr><th>Member</th><th></th></tr>${g.memberIds.map(M).map(p => `<tr><td>${h(p.name)} <span class="muted small">${h(p.email)}</span></td>
+      <td><button class="link" onclick="X.memb('${g.id}','${p.id}',false)">Remove from Group</button></td></tr>`).join('')}</table>
+    <h2>Upcoming Meetings linking this Group</h2>${links.map(m => `<div><button class="link" onclick="X.go('A','meeting','${m.id}')">${h(m.title)}</button> <span class="muted">${fmt(m.start)}</span></div>`).join('') || '<p class="muted">None.</p>'}`;
+  },
+  settings() {
+    return `<h1>Settings</h1><div class="form"><label>Your timezone <span class="muted">(every Meeting uses it)</span>
+      <select onchange="S.organiser.tz=this.value;log('Timezone set to '+this.value);render()">${['Europe/London','Europe/Berlin','America/New_York','Asia/Kolkata'].map(z => `<option ${z === S.organiser.tz ? 'selected' : ''}>${z}</option>`).join('')}</select></label>
+      <p class="muted">Sign-in and sign-up come from the chosen auth provider (not prototyped).</p></div>`;
+  },
+};
+
+// ================= Variant B: people columns + meeting tray =================
+const VB = {
+  name:'People columns + meeting tray',
+  target() { return VS.B.meeting ? MT(VS.B.meeting) : VS.B.draft; },
+  ctx() { return VS.B.meeting || 'draft'; },
+  render() {
+    const v = VS.B, up = S.meetings.filter(m => !isPast(m)).sort(byStart());
+    return `<div class="vb"><div class="top"><b>Group Meetings</b>
+      <button class="primary" onclick="VS.B.meeting=null;X.newDraft('B');render()">+ New meeting</button>
+      <div class="strip">${up.map(m => `<button class="mchip ${v.meeting === m.id ? 'on' : ''}" onclick="VS.B.meeting='${m.id}';render()"><span>${fmtShort(m.start)}</span>${h(m.title)}</button>`).join('')}</div>
+      <span class="muted">${h(S.organiser.name)}</span></div>
+      <div class="cols"><section>${VB.groupsCol()}</section><section>${VB.membersCol()}</section><section class="c3">${VB.panel()}</section></div></div>`;
+  },
+  groupsCol() {
+    const v = VS.B, t = VB.target(), ro = t.frozen;
+    return `<h3>Groups</h3><div class="grow ${v.group === 'all' ? 'on' : ''}"><span class="name" onclick="VS.B.group='all';render()">All Members (${S.members.length})</span></div>
+    ${S.groups.map(g => `<div class="grow ${v.group === g.id ? 'on' : ''}">
+      <input type="checkbox" title="Link whole Group to the Meeting on the right" ${t.links.includes(g.id) ? 'checked' : ''} ${ro ? 'disabled' : ''} onchange="X[this.checked?'link':'unlink']('${VB.ctx()}','${g.id}')">
+      <span class="name" onclick="VS.B.group='${g.id}';render()">${h(g.name)} <span class="muted">${g.memberIds.length}</span></span></div>`).join('')}
+    <div style="margin-top:10px;display:flex;gap:4px"><input id="bg" placeholder="New Group" style="width:100%"><button onclick="X.addGroup('bg')">+</button></div>
+    <p class="muted small">☑ = the whole Group is linked (live) to the Meeting on the right.</p>`;
+  },
+  membersCol() {
+    const v = VS.B, g = v.group === 'all' ? null : G(v.group), t = VB.target(), ro = t.frozen;
+    const on = new Set(attendees(t).map(a => a.member.id));
+    const list = (g ? g.memberIds.map(M) : [...S.members]).sort((a, b) => a.name.localeCompare(b.name));
+    return `<h3>${g ? h(g.name) : 'All Members'}</h3>
+    <div class="target">Ticks put people on: <b>${VS.B.meeting ? h(t.title) + ' · ' + fmtShort(t.start) : 'the new meeting'}</b>${ro ? ' (started: fixed record)' : ''}</div>
+    ${list.map(p => { const w = removeWarning(t, p.id); return `<div class="mrow"><input type="checkbox" ${on.has(p.id) ? 'checked' : ''} ${ro ? 'disabled' : ''}
+        title="${h(w)}" onchange="X[this.checked?'addInd':'remove']('${VB.ctx()}','${p.id}')">
+      <div class="who">${h(p.name)} <span class="muted small">${h(p.email)}</span>${w ? ' <span class="warn small" title="' + h(w) + '">⚠ via link</span>' : ''}
+        <div>${S.groups.filter(x => x.memberIds.includes(p.id)).map(x => `<span class="b">${h(x.name)}</span>`).join('')}</div></div>
+      ${g ? `<button class="link small" onclick="X.memb('${g.id}','${p.id}',false)">remove from Group</button>` : ''}</div>`; }).join('')}
+    <div style="margin-top:10px;display:flex;gap:4px;flex-wrap:wrap"><input id="bn" placeholder="Name"><input id="be" placeholder="Email"><button onclick="X.addMember('bn','be',${g ? `'${g.id}'` : 'null'})">Add${g ? ' to ' + h(g.name) : ' Member'}</button></div>
+    ${g ? `<div style="margin-top:6px"><select onchange="if(this.value)X.memb('${g.id}',this.value,true)"><option value="">+ existing Member into ${h(g.name)}…</option>${S.members.filter(p => !g.memberIds.includes(p.id)).map(p => `<option value="${p.id}">${h(p.name)}</option>`).join('')}</select></div>` : ''}
+    <p class="fog" style="margin-top:12px">Member details, editing and deleting: see “What are a Member's details…”.</p>`;
+  },
+  tray(t) {
+    return `<div>${t.links.map(g => `<span class="chip live">${h(G(g).name)} · live <button onclick="X.unlink('${VB.ctx()}','${g}')">×</button></span>`).join('')}
+      ${t.copies.map((c, i) => `<span class="chip copy">copy of ${h(G(c.groupId).name)} <button onclick="X.uncopy('${VB.ctx()}',${i})">×</button></span>`).join('')}</div>
+      <details ${VS.B.openList ? 'open' : ''} ontoggle="VS.B.openList=this.open"><summary><b>${attendees(t).length} Attendees</b> <span class="muted small">(de-duplicated)</span></summary>${flatList(t, VB.ctx())}</details>`;
+  },
+  panel() {
+    const v = VS.B;
+    if (v.meeting) {
+      const m = MT(v.meeting), sr = m.seriesId && S.series.find(s => s.id === m.seriesId);
+      return `<h3>Meeting</h3><h2 style="margin:0">${h(m.title)}</h2><p>${fmt(m.start)} · ${m.duration ? m.duration + ' min' : 'no duration'}<br>${h(m.location || '')}</p>
+      ${sr ? `<p class="note small">Part of the Series: ${repeatText(sr)}.${m.changed ? ' <b>Differs from the Series.</b>' : ''}</p>` : ''}
+      ${m.notes ? `<p>${h(m.notes)}</p>` : ''}${m.privateNotes ? `<p class="muted">🔒 ${h(m.privateNotes)}</p>` : ''}
+      <p class="fog">Edit / reschedule / cancel: not yet specified.</p>${VB.tray(m)}
+      <p><button onclick="VS.B.meeting=null;render()">Close</button></p>`;
+    }
+    const d = v.draft;
+    return `<h3>New meeting</h3><p class="muted small">Tick Groups (live link) or Members on the left to add them.</p>
+      ${VB.tray(d)}<hr style="border:0;border-top:1px solid var(--line)">${detailFields('B')}
+      <p><button class="primary" onclick="X.create('B')">Create meeting with ${attendees(d).length} Attendees</button></p>`;
+  },
+};
+
+// ================= Variant C: agenda + wizard + people drawer =================
+const VC = {
+  name:'Agenda + wizard + People drawer',
+  render() {
+    const v = VS.C;
+    return `<div class="vc"><header><h1>${v.screen === 'wizard' ? 'New meeting' : 'Your meetings'}</h1>
+      <div><button onclick="VS.C.drawer=!VS.C.drawer;render()">👥 People</button> <button class="primary" onclick="X.newDraft('C');VS.C.step=1;VS.C.screen='wizard';render()">+ New meeting</button></div></header>
+      <div class="col">${VC[v.screen]()}</div>${v.drawer ? VC.drawer() : ''}</div>`;
+  },
+  agenda() {
+    const weekOf = s => { const d = new Date(s); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d; };
+    const thisWk = weekOf(toStr(NOW)).getTime(), groups = new Map();
+    S.meetings.filter(m => !isPast(m)).sort(byStart()).forEach(m => { const k = weekOf(m.start).getTime(); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(m); });
+    const label = k => k === thisWk ? 'This week' : k === thisWk + 7*864e5 ? 'Next week' : 'Week of ' + new Date(k).toLocaleDateString('en-GB', {day:'numeric', month:'short'});
+    const row = m => { const d = new Date(m.start), a = attendees(m);
+      return `<div class="ev" onclick="VS.C.sel='${m.id}';VS.C.screen='meeting';render()"><div class="day"><b>${d.getDate()}</b><span class="muted small">${d.toLocaleDateString('en-GB', {weekday:'short'})}</span></div>
+      <div><b>${h(m.title)}</b> ${m.seriesId ? '<span class="b">↻ series</span>' : ''}<div class="muted">${d.toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'})}${m.location ? ' · ' + h(m.location) : ''}</div>
+      <div class="small">${a.length} attending${m.links.length ? ' · via ' + m.links.map(g => h(G(g).name)).join(' + ') : ''}</div></div></div>`; };
+    const past = S.meetings.filter(isPast).sort(byStart(true));
+    return [...groups].map(([k, ms]) => `<div class="week">${label(k)}</div>${ms.map(row).join('')}`).join('')
+      + `<div class="week">Earlier</div>${VS.C.showPast ? past.map(row).join('') + '<p class="fog">Past Meetings: not yet specified.</p>' : `<button class="link" onclick="VS.C.showPast=true;render()">Show ${past.length} past Meeting(s)</button>`}`;
+  },
+  sections(m, ctx) {
+    if (m.frozen) return `<div class="sec"><div>Fixed at start (${m.frozen.length})</div>${m.frozen.map(id => `<div class="prow">${h(M(id).name)}</div>`).join('')}</div>`;
+    const secs = [], seen = new Map();
+    m.links.forEach(g => secs.push({ title:G(g).name, tag:'<span class="b live">live link</span>', ids:G(g).memberIds, g }));
+    m.copies.forEach((c, i) => secs.push({ title:G(c.groupId).name, tag:'<span class="b copy">copy: no longer follows the Group</span>', ids:c.memberIds, ci:i }));
+    if (m.individuals.length) secs.push({ title:'Added individually', tag:'', ids:m.individuals });
+    secs.forEach(s => s.ids.forEach(id => seen.set(id, (seen.get(id) || 0) + 1)));
+    return secs.map(s => `<div class="sec"><div>${h(s.title)} ${s.tag} <span class="muted">${s.ids.length}</span>
+        ${s.g ? `<button class="link small" style="float:right" onclick="X.unlink('${ctx}','${s.g}')">unlink</button>` : ''}${s.ci !== undefined ? `<button class="link small" style="float:right" onclick="X.uncopy('${ctx}',${s.ci})">drop</button>` : ''}</div>
+      ${s.ids.map(id => `<div class="prow"><span>${h(M(id).name)} ${seen.get(id) > 1 ? '<span class="muted small">· also elsewhere, counted once</span>' : ''}</span>
+        <button class="link small" title="${h(removeWarning(m, id))}" onclick="X.remove('${ctx}','${id}')">remove${removeWarning(m, id) ? ' ⚠' : ''}</button></div>`).join('')}</div>`).join('') || '<p class="muted">No one yet.</p>';
+  },
+  meeting() {
+    const m = MT(VS.C.sel), sr = m.seriesId && S.series.find(s => s.id === m.seriesId), ro = isPast(m);
+    return `<p><button class="link" onclick="VS.C.screen='agenda';render()">← All meetings</button></p>
+    <h2 style="font-size:26px;margin:4px 0">${h(m.title)}</h2><p style="font-size:16px">${fmt(m.start)}${m.duration ? ' · ' + m.duration + ' min' : ''}${m.location ? ' · ' + h(m.location) : ''}</p>
+    ${sr ? `<p class="note">↻ ${repeatText(sr)}.${m.changed ? ' This one differs from the Series.' : ''}</p>` : ''}
+    ${m.notes ? `<p>${h(m.notes)}</p>` : ''}${m.privateNotes ? `<p class="note">🔒 Private: ${h(m.privateNotes)}</p>` : ''}
+    <p class="fog">Edit, reschedule, cancel${sr ? ', edit or end the Series' : ''}: not yet specified.</p>
+    <h3>${attendees(m).length} attending</h3>
+    ${ro ? '' : `<div class="row" style="margin-bottom:6px"><select onchange="if(this.value)X.link('${m.id}',this.value)"><option value="">+ Link a Group…</option>${S.groups.filter(g => !m.links.includes(g.id)).map(g => `<option value="${g.id}">${h(g.name)}</option>`).join('')}</select>
+      <select onchange="if(this.value)X.addInd('${m.id}',this.value)"><option value="">+ Add one Member…</option>${S.members.map(p => `<option value="${p.id}">${h(p.name)}</option>`).join('')}</select></div>`}
+    ${VC.sections(m, m.id)}`;
+  },
+  wizard() {
+    const v = VS.C, d = v.draft, st = v.step;
+    const steps = `<div class="steps">${['What & when', 'Who', 'Check'].map((l, i) => `<span class="${st === i + 1 ? 'on' : ''}">${i + 1}. ${l}</span>`).join('')}</div>`;
+    const nav = (back, next) => `<div class="actions">${back ? `<button onclick="VS.C.step--;render()">← Back</button>` : `<button onclick="VS.C.screen='agenda';render()">Cancel</button>`}${next}</div>`;
+    if (st === 1) return steps + detailFields('C') + nav(false, `<button class="primary" onclick="VS.C.step=2;render()">Next: who →</button>`);
+    if (st === 2) {
+      const covered = new Set(attendees(d).map(a => a.member.id));
+      return steps + `<h3>Whole Groups <span class="muted small">(live: they follow Group changes until the Meeting starts)</span></h3>
+      <div class="cards">${S.groups.map(g => `<button class="gcard ${d.links.includes(g.id) ? 'on' : ''}" onclick="X[${d.links.includes(g.id)} ? 'unlink' : 'link']('draft','${g.id}')">
+        <b>${d.links.includes(g.id) ? '✓ ' : ''}${h(g.name)}</b><div class="muted small">${g.memberIds.map(id => h(M(id).name.split(' ')[0])).join(', ')}</div></button>`).join('')}</div>
+      <h3>And people one at a time</h3><input placeholder="Search Members…" style="width:100%" oninput="X.filter(this.value)">
+      <div id="cm">${S.members.map(p => `<label class="check mf" data-n="${h(p.name.toLowerCase())}"><input type="checkbox" ${d.individuals.includes(p.id) ? 'checked' : ''}
+        onchange="X[this.checked?'addInd':'remInd']('draft','${p.id}')"> ${h(p.name)} ${covered.has(p.id) && !d.individuals.includes(p.id) ? '<span class="b live">already via a Group</span>' : ''}</label>`).join('')}</div>
+      <p><b>${covered.size}</b> people so far.</p>` + nav(true, `<button class="primary" onclick="VS.C.step=3;render()">Next: check →</button>`);
+    }
+    const a = attendees(d), dup = a.filter(x => x.sources.length > 1);
+    return steps + `<div class="sec" style="padding:12px"><b style="font-size:17px">${h(d.title || 'Untitled meeting')}</b>
+      <p>${fmt(d.date + 'T' + d.time)}${d.duration ? ' · ' + d.duration + ' min' : ''}${d.location ? ' · ' + h(d.location) : ''}${d.repeat ? `<br>↻ ${repeatText({ ...d, start:d.date + 'T' + d.time })}` : ''}</p>
+      <p><b>${a.length}</b> Attendees${d.links.length ? ` from ${d.links.map(g => h(G(g).name)).join(' + ')}` : ''}${d.individuals.length ? ` plus ${d.individuals.length} added individually` : ''}.</p>
+      ${dup.length ? `<p class="muted small">Counted once: ${dup.map(x => h(x.member.name)).join(', ')} (reached more than one way).</p>` : ''}</div>
+      ${VC.sections(d, 'draft')}` + nav(true, `<button class="primary" onclick="X.create('C')">Create meeting</button>`);
+  },
+  drawer() {
+    const v = VS.C, tab = v.tab || 'members';
+    let body;
+    if (tab === 'members') body = `<div class="row" style="margin:8px 0"><input id="cn" placeholder="Name" style="flex:1"><input id="ce" placeholder="Email" style="flex:1"><button onclick="X.addMember('cn','ce')">Add</button></div>
+      <p class="fog">Member details / edit / delete: see “What are a Member's details…”. Bulk import: not yet specified.</p>
+      ${[...S.members].sort((a, b) => a.name.localeCompare(b.name)).map(p => `<div class="sec"><div style="cursor:pointer;font-weight:400" onclick="VS.C.open=VS.C.open==='${p.id}'?null:'${p.id}';render()">
+        <b>${h(p.name)}</b> <span class="muted small">${h(p.email)}</span><div>${S.groups.filter(g => g.memberIds.includes(p.id)).map(g => `<span class="b">${h(g.name)}</span>`).join('')}</div></div>
+        ${v.open === p.id ? `<div style="padding:4px 12px">${S.groups.map(g => `<label class="check"><input type="checkbox" ${g.memberIds.includes(p.id) ? 'checked' : ''} onchange="X.memb('${g.id}','${p.id}',this.checked)"> ${h(g.name)}</label>`).join('')}</div>` : ''}</div>`).join('')}`;
+    else body = `<div class="row" style="margin:8px 0"><input id="cg" placeholder="New Group name" style="flex:1"><button onclick="X.addGroup('cg')">Create</button></div>
+      ${S.groups.map(g => `<div class="sec"><div style="cursor:pointer" onclick="VS.C.open=VS.C.open==='${g.id}'?null:'${g.id}';render()">${h(g.name)} <span class="muted">${g.memberIds.length}</span>
+        ${upcomingLinking(g.id).length ? `<span class="b live">linked to ${upcomingLinking(g.id).length} upcoming</span>` : ''}</div>
+        ${v.open === g.id ? `<div style="padding:4px 12px">${S.members.map(p => `<label class="check"><input type="checkbox" ${g.memberIds.includes(p.id) ? 'checked' : ''} onchange="X.memb('${g.id}','${p.id}',this.checked)"> ${h(p.name)}</label>`).join('')}</div>` : ''}</div>`).join('')}`;
+    return `<div class="drawer"><div style="display:flex;justify-content:space-between"><b style="font-size:18px">People</b><button onclick="VS.C.drawer=false;render()">✕</button></div>
+      <div class="tabs" style="display:flex;gap:4px;margin-top:10px"><button class="${tab === 'members' ? 'on' : ''}" onclick="VS.C.tab='members';VS.C.open=null;render()">Members</button><button class="${tab === 'groups' ? 'on' : ''}" onclick="VS.C.tab='groups';VS.C.open=null;render()">Groups</button></div>${body}</div>`;
+  },
+};
+
+// ================= wiring =================
+const VARIANTS = { A:VA, B:VB, C:VC };
+const KEYS = Object.keys(VARIANTS);
+const VS = { A:{ screen:'meetings', tab:'up', draft:newDraft() }, B:{ group:'all', meeting:null, draft:newDraft() }, C:{ screen:'agenda', step:1, draft:newDraft(), drawer:false } };
+let cur = new URLSearchParams(location.search).get('variant');
+if (!KEYS.includes(cur)) cur = 'A';
+
+const tgt = ctx => ctx === 'draft' ? VS[cur].draft : MT(ctx);
+const X = {
+  go(k, screen, sel) { VS[k].screen = screen; if (sel !== undefined) VS[k].sel = sel; render(); scrollTo(0, 0); },
+  newDraft(k) { VS[k].draft = newDraft(); },
+  create(k) {
+    const m = createFromDraft(VS[k].draft); VS[k].draft = newDraft();
+    if (k === 'A') X.go('A', 'meeting', m.id); else if (k === 'B') { VS.B.meeting = m.id; render(); } else { VS.C.sel = m.id; VS.C.screen = 'meeting'; render(); }
+  },
+  link(ctx, g) { const t = tgt(ctx); if (!t.links.includes(g)) t.links.push(g); if (t.seriesId) t.changed = true; log(`Linked ${G(g).name} to "${t.title || 'draft'}" (live)`); render(); },
+  unlink(ctx, g) { const t = tgt(ctx); t.links = t.links.filter(x => x !== g); if (t.seriesId) t.changed = true; log(`Unlinked ${G(g).name} from "${t.title || 'draft'}"`); render(); },
+  uncopy(ctx, i) { const t = tgt(ctx); log(`Dropped copy of ${G(t.copies[i].groupId).name} from "${t.title || 'draft'}"`); t.copies.splice(i, 1); render(); },
+  addInd(ctx, id) { const t = tgt(ctx); if (!t.individuals.includes(id)) t.individuals.push(id); if (t.seriesId) t.changed = true; log(`Added ${M(id).name} individually to "${t.title || 'draft'}"`); render(); },
+  remInd(ctx, id) { const t = tgt(ctx); t.individuals = t.individuals.filter(x => x !== id); render(); },
+  remove(ctx, id) { removeAttendee(tgt(ctx), id); render(); },
+  memb(g, p, on) { setMembership(g, p, on); render(); },
+  addMember(nId, eId, g) { const n = document.getElementById(nId).value.trim(); if (!n) return; addMember(n, document.getElementById(eId).value.trim(), g || null); render(); },
+  addGroup(id) { const n = document.getElementById(id).value.trim(); if (n) { addGroup(n); render(); } },
+  filter(q) { document.querySelectorAll('#cm .mf').forEach(el => el.style.display = el.dataset.n.includes(q.toLowerCase()) ? '' : 'none'); },
+  cycle(dir) {
+    cur = KEYS[(KEYS.indexOf(cur) + dir + KEYS.length) % KEYS.length];
+    try { const u = new URL(location.href); u.searchParams.set('variant', cur); history.replaceState(null, '', u); } catch (e) {}
+    render();
+  },
+};
+document.addEventListener('keydown', e => {
+  if (e.target.closest('input,textarea,select,[contenteditable]')) return;
+  if (e.key === 'ArrowLeft') X.cycle(-1);
+  if (e.key === 'ArrowRight') X.cycle(1);
+});
+
+function renderState() {
+  const row = m => `<tr><td>${h(m.title)}${m.seriesId ? ' ↻' : ''}${m.changed ? ' *' : ''}</td><td>${fmtShort(m.start)}</td>
+    <td>${m.frozen ? 'frozen' : [...m.links.map(g => 'L:' + G(g).name), ...m.copies.map(c => 'C:' + G(c.groupId).name + '(' + c.memberIds.length + ')'), ...m.individuals.map(id => 'I:' + M(id).name.split(' ')[0])].map(h).join(', ')}</td>
+    <td>${attendees(m).length}</td></tr>`;
+  document.getElementById('statebody').innerHTML = `<div class="log">${S.log.slice(-8).reverse().map(l => `<div>${h(l)}</div>`).join('')}</div>
+    <table><tr><th>Meeting</th><th>Start</th><th>L=link C=copy I=individual</th><th>#</th></tr>${[...S.meetings].sort(byStart()).map(row).join('')}</table>
+    <div style="margin-top:6px">${S.groups.map(g => `<div><b>${h(g.name)}</b>: ${g.memberIds.map(id => h(M(id).name.split(' ')[0])).join(', ') || '—'}</div>`).join('')}</div>`;
+}
+function render() {
+  document.getElementById('app').innerHTML = VARIANTS[cur].render();
+  document.getElementById('vlabel').textContent = `${cur} (${VARIANTS[cur].name}) · ${KEYS.indexOf(cur) + 1}/${KEYS.length}`;
+  renderState();
+}
+render();
+</script>
+</body>
+</html>
