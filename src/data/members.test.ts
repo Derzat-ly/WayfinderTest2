@@ -17,7 +17,12 @@ describe("Members", () => {
 
     expect(added.ok).toBe(true);
     expect(await data.members()).toEqual([
-      { id: expect.any(String), name: "Ann Lee", email: "ann@x.com" },
+      {
+        id: expect.any(String),
+        name: "Ann Lee",
+        email: "ann@x.com",
+        groups: [],
+      },
     ]);
   });
 

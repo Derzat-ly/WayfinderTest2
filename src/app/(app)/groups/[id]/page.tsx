@@ -1,0 +1,60 @@
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { requireOrganiserData } from "@/app-context";
+import { AddMemberForm } from "../../members/add-member-form";
+import { removeFromGroup } from "../actions";
+import { AddExistingMemberForm } from "./add-existing-member-form";
+
+export default async function GroupPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = await params;
+  const data = await requireOrganiserData();
+  const group = await data.group(id);
+  if (!group) notFound();
+  const inGroup = new Set(group.members.map((m) => m.id));
+  const candidates = (await data.members()).filter((m) => !inGroup.has(m.id));
+
+  return (
+    <>
+      <p className="hint">
+        <Link href="/groups">Groups</Link>
+      </p>
+      <h1>{group.name}</h1>
+      <AddExistingMemberForm groupId={group.id} candidates={candidates} />
+      <AddMemberForm groupId={group.id} />
+      {group.members.length === 0 ? (
+        <p className="hint">No Members in this Group yet.</p>
+      ) : (
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Email</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {group.members.map((member) => (
+              <tr key={member.id}>
+                <td>
+                  <Link href={`/members/${member.id}`}>{member.name}</Link>
+                </td>
+                <td>{member.email}</td>
+                <td>
+                  <form
+                    action={removeFromGroup.bind(null, group.id, member.id)}
+                  >
+                    <button className="link-button">Remove</button>
+                  </form>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </>
+  );
+}

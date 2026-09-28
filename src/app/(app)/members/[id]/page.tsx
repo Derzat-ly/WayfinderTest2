@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireOrganiserData } from "@/app-context";
 import { EditMemberForm } from "./edit-member-form";
+import { GroupCheckboxes } from "./group-checkboxes";
 
 export default async function MemberPage({
   params,
@@ -9,8 +10,10 @@ export default async function MemberPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const member = await (await requireOrganiserData()).member(id);
+  const data = await requireOrganiserData();
+  const member = await data.member(id);
   if (!member) notFound();
+  const groupChoices = await data.groupChoicesFor(id);
 
   return (
     <>
@@ -19,6 +22,7 @@ export default async function MemberPage({
       </p>
       <h1>{member.name}</h1>
       <EditMemberForm member={member} />
+      <GroupCheckboxes memberId={member.id} choices={groupChoices} />
     </>
   );
 }

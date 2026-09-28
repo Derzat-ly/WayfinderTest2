@@ -54,6 +54,8 @@ export async function createTestApp() {
   }
 
   return {
+    /** Raw access, only for testing what the schema itself enforces. */
+    db,
     organiserData: createOrganiserData({ auth, db }),
     operator: createOperator({ auth }),
     signUp,

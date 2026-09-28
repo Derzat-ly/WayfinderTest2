@@ -1,7 +1,9 @@
 import { sql } from "drizzle-orm";
 import {
+  foreignKey,
   index,
   integer,
+  primaryKey,
   sqliteTable,
   text,
   unique,
@@ -101,5 +103,47 @@ export const member = sqliteTable(
     unique().on(t.organiserId, t.id),
     unique().on(t.organiserId, t.emailKey),
     index("member_organiser_id_name_idx").on(t.organiserId, t.name),
+  ],
+);
+
+/** A Group. Named this way because `group` is an SQL keyword. */
+export const memberGroup = sqliteTable(
+  "member_group",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organiserId: text("organiser_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    /** Not unique. */
+    name: text("name").notNull(),
+    ...timestamps,
+  },
+  (t) => [unique().on(t.organiserId, t.id)],
+);
+
+/**
+ * Which Members are in which Groups. The composite foreign keys make the
+ * database refuse a link between one Organiser's Group and another's Member.
+ */
+export const groupMembership = sqliteTable(
+  "group_membership",
+  {
+    organiserId: text("organiser_id").notNull(),
+    groupId: text("group_id").notNull(),
+    memberId: text("member_id").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.groupId, t.memberId] }),
+    foreignKey({
+      columns: [t.organiserId, t.groupId],
+      foreignColumns: [memberGroup.organiserId, memberGroup.id],
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [t.organiserId, t.memberId],
+      foreignColumns: [member.organiserId, member.id],
+    }).onDelete("cascade"),
+    index("group_membership_member_id_idx").on(t.memberId),
   ],
 );

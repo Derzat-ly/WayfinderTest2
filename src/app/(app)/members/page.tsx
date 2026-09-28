@@ -27,7 +27,14 @@ export default async function MembersPage() {
                   <Link href={`/members/${member.id}`}>{member.name}</Link>
                 </td>
                 <td>{member.email}</td>
-                <td />
+                <td>
+                  {member.groups.map((group, i) => (
+                    <span key={group.id}>
+                      {i > 0 && ", "}
+                      <Link href={`/groups/${group.id}`}>{group.name}</Link>
+                    </span>
+                  ))}
+                </td>
               </tr>
             ))}
           </tbody>

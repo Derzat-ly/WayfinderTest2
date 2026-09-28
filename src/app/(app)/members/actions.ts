@@ -11,6 +11,8 @@ type MemberFormState = {
 
 export type AddMemberState = MemberFormState & {
   sameName?: boolean;
+  /** The Group the Member was being added into is gone. */
+  notFound?: boolean;
   /** What was typed, so a refused or warned add keeps it. */
   values?: { name: string; email: string };
   added?: boolean;
@@ -25,11 +27,14 @@ export async function addMember(
     name: String(form.get("name") ?? ""),
     email: String(form.get("email") ?? ""),
   };
+  const groupId = form.get("groupId");
   const result = await data.addMember(values, {
     confirmSameName: form.get("confirmSameName") === "1",
+    groupId: groupId ? String(groupId) : undefined,
   });
   if (!result.ok) return { ...result, values };
   revalidatePath("/members");
+  if (groupId) revalidatePath("/groups", "layout");
   return { added: true };
 }
 

@@ -4,12 +4,14 @@ import { useActionState } from "react";
 import { addMember } from "./actions";
 import { DuplicateEmail } from "./duplicate-email";
 
-export function AddMemberForm() {
+/** With `groupId`, the new Member also joins that Group. */
+export function AddMemberForm({ groupId }: { groupId?: string } = {}) {
   const [state, action, pending] = useActionState(addMember, {});
   const errors = state.fieldErrors ?? {};
 
   return (
     <form className="add-row" action={action}>
+      {groupId && <input type="hidden" name="groupId" value={groupId} />}
       <label className="field">
         Name
         <input
@@ -30,10 +32,15 @@ export function AddMemberForm() {
         {errors.email && <span className="error">{errors.email}</span>}
       </label>
       <button className="button" disabled={pending}>
-        Add Member
+        {groupId ? "Add new Member" : "Add Member"}
       </button>
       <div className="add-row-message">
         {state.duplicateEmail && <DuplicateEmail {...state.duplicateEmail} />}
+        {state.notFound && (
+          <p className="error" role="alert">
+            This Group no longer exists.
+          </p>
+        )}
         {state.sameName && (
           <p className="warning" role="alert">
             A Member with this name exists.{" "}
