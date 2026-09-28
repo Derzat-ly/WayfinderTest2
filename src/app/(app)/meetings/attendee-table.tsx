@@ -27,7 +27,12 @@ export function AttendeeTable<A extends Attendee>({
         {attendees.map((attendee) => (
           // A deleted Member's record has no Member id, but its email is unique.
           <tr key={attendee.memberId ?? attendee.email}>
-            <td>{attendee.name}</td>
+            <td>
+              {attendee.name}
+              {attendee.memberId === null && (
+                <span className="hint"> · deleted Member</span>
+              )}
+            </td>
             <td>{attendee.email}</td>
             <td>
               <AddedBadge attendee={attendee} />
@@ -60,18 +65,24 @@ export function LinkedGroupChips({
   groups,
   removeControl,
 }: {
-  groups: { id: string; name: string; kind: "live" | "copy" }[];
+  /** `id` is NULL on a started Meeting's frozen link once the Group is deleted. */
+  groups: { id: string | null; name: string; kind: "live" | "copy" }[];
   /** The × button for one live chip; none on a started Meeting. */
   removeControl?: (groupId: string, name: string) => ReactNode;
 }) {
   if (groups.length === 0) return null;
   return (
     <ul className="chips" aria-label="Linked Groups">
-      {groups.map((group) => (
-        <li key={group.id} className={`chip chip-${group.kind}`}>
+      {groups.map((group, index) => (
+        <li
+          key={group.id ?? `deleted-${index}`}
+          className={`chip chip-${group.kind}`}
+        >
           {group.name}
           {group.kind === "copy" && <span> · copy</span>}
-          {group.kind === "live" && removeControl?.(group.id, group.name)}
+          {group.kind === "live" &&
+            group.id !== null &&
+            removeControl?.(group.id, group.name)}
         </li>
       ))}
     </ul>

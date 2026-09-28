@@ -43,6 +43,13 @@
       "when": 1790600853196,
       "tag": "0005_attendee",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1790602909063,
+      "tag": "0006_meeting_series",
+      "breakpoints": true
     }
   ]
 }

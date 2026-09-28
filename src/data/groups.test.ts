@@ -254,3 +254,109 @@ describe("Groups linked to Meetings", () => {
   });
 });
 
+
+describe("Deleting a Group", () => {
+  it("takes the Group off upcoming Meetings, dropping Members it alone covered and keeping those covered another way", async () => {
+    const app = await createTestApp();
+    const data = await signedInOrganiser(app);
+    const choir = await data.createGroup("Choir");
+    const band = await data.createGroup("Band");
+    if (!choir.ok || !band.ok) throw new Error("setup failed");
+    const onlyChoir = await data.addMember(
+      { name: "Ann Lee", email: "ann@x.com" },
+      { groupId: choir.group.id },
+    );
+    const alsoBand = await data.addMember(
+      { name: "Ben Ng", email: "ben@x.com" },
+      { groupId: choir.group.id },
+    );
+    const alsoChosen = await data.addMember(
+      { name: "Cat Oh", email: "cat@x.com" },
+      { groupId: choir.group.id },
+    );
+    if (!onlyChoir.ok || !alsoBand.ok || !alsoChosen.ok) {
+      throw new Error("setup failed");
+    }
+    await data.addToGroup(band.group.id, alsoBand.member.id);
+    const concert = await data.createMeeting(
+      { title: "Concert", date: "2099-07-01", time: "19:30" },
+      {
+        groupIds: [choir.group.id, band.group.id],
+        memberIds: [alsoChosen.member.id],
+      },
+    );
+    if (!concert.ok) throw new Error("setup failed");
+
+    const deleted = await data.deleteGroup(choir.group.id);
+    const shown = await data.meeting(concert.meeting.id);
+
+    expect(deleted).toEqual({ ok: true });
+    expect((await data.groups()).map((g) => g.name)).toEqual(["Band"]);
+    expect(shown?.linkedGroups).toEqual([
+      { id: band.group.id, name: "Band", kind: "live" },
+    ]);
+    expect(shown?.attendees).toMatchObject([
+      { name: "Ben Ng", addedVia: "linked", group: { name: "Band" } },
+      { name: "Cat Oh", addedVia: "individual" },
+    ]);
+  });
+
+  it("keeps Attendees copied from the Group on their Meetings, no longer marked as a copy", async () => {
+    const app = await createTestApp();
+    const data = await signedInOrganiser(app);
+    const choir = await data.createGroup("Choir");
+    if (!choir.ok) throw new Error("setup failed");
+    const ann = await data.addMember(
+      { name: "Ann Lee", email: "ann@x.com" },
+      { groupId: choir.group.id },
+    );
+    const ben = await data.addMember(
+      { name: "Ben Ng", email: "ben@x.com" },
+      { groupId: choir.group.id },
+    );
+    if (!ann.ok || !ben.ok) throw new Error("setup failed");
+    const concert = await data.createMeeting(
+      { title: "Concert", date: "2099-07-01", time: "19:30" },
+      { groupIds: [choir.group.id] },
+    );
+    if (!concert.ok) throw new Error("setup failed");
+    // Removing Ben turns the Choir link into a copy, so Ann is on it as a copy.
+    await data.removeAttendee(concert.meeting.id, ben.member.id, {
+      confirmCopy: true,
+    });
+
+    await data.deleteGroup(choir.group.id);
+    const shown = await data.meeting(concert.meeting.id);
+
+    expect(shown?.linkedGroups).toEqual([]);
+    expect(shown?.attendees).toEqual([
+      {
+        memberId: ann.member.id,
+        name: "Ann Lee",
+        email: "ann@x.com",
+        addedVia: "individual",
+      },
+    ]);
+  });
+
+  it("won't delete another Organiser's Group or touch their Meetings", async () => {
+    const app = await createTestApp();
+    const ada = await signedInOrganiser(app, "ada@example.com");
+    const grace = await signedInOrganiser(app, "grace@example.com");
+    const choir = await ada.createGroup("Choir");
+    if (!choir.ok) throw new Error("setup failed");
+    const concert = await ada.createMeeting(
+      { title: "Concert", date: "2099-07-01", time: "19:30" },
+      { groupIds: [choir.group.id] },
+    );
+    if (!concert.ok) throw new Error("setup failed");
+
+    const graceDeletes = await grace.deleteGroup(choir.group.id);
+
+    expect(graceDeletes).toEqual({ ok: false, notFound: true });
+    expect((await ada.groups()).map((g) => g.name)).toEqual(["Choir"]);
+    expect((await ada.meeting(concert.meeting.id))?.linkedGroups).toEqual([
+      { id: choir.group.id, name: "Choir", kind: "live" },
+    ]);
+  });
+});

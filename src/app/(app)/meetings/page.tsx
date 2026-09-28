@@ -58,6 +58,18 @@ export default async function MeetingsPage({
                 </td>
                 <td>
                   <Link href={`/meetings/${meeting.id}`}>{meeting.title}</Link>
+                  {meeting.inSeries && <> <span className="badge">series</span></>}
+                  {meeting.changed && (
+                    <>
+                      {" "}
+                      <span
+                        className="badge badge-copy"
+                        title="Its Attendees differ from the rest of its Meeting Series."
+                      >
+                        changed
+                      </span>
+                    </>
+                  )}
                 </td>
                 <td>
                   {meeting.attendeeCount}

@@ -36,11 +36,19 @@ export async function createTestApp() {
       },
       returnHeaders: true,
     });
-    const cookie = headers
-      .getSetCookie()
-      .map((c) => c.split(";")[0])
-      .join("; ");
-    return new Headers({ cookie });
+    return sessionHeaders(headers);
+  }
+
+  /** Signs an existing Organiser in, e.g. once their session has expired. */
+  async function signIn(
+    email: string,
+    password = "correct horse battery staple",
+  ) {
+    const { headers } = await auth.api.signInEmail({
+      body: { email, password },
+      returnHeaders: true,
+    });
+    return sessionHeaders(headers);
   }
 
   /** Whether Better Auth accepts this email and password. */
@@ -59,6 +67,16 @@ export async function createTestApp() {
     organiserData: createOrganiserData({ auth, db }),
     operator: createOperator({ auth, db }),
     signUp,
+    signIn,
     canSignIn,
   };
+}
+
+/** Request headers carrying the session cookie Better Auth just set. */
+function sessionHeaders(headers: Headers) {
+  const cookie = headers
+    .getSetCookie()
+    .map((c) => c.split(";")[0])
+    .join("; ");
+  return new Headers({ cookie });
 }

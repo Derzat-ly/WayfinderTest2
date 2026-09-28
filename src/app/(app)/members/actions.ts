@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { requireOrganiserData } from "@/app-context";
 import type { MemberFieldErrors } from "@/data/organiser-data";
 
@@ -58,4 +59,11 @@ export async function editMember(
   if (!result.ok) return result;
   revalidatePath("/members");
   return { saved: true };
+}
+
+export async function deleteMember(id: string) {
+  const data = await requireOrganiserData();
+  await data.deleteMember(id);
+  revalidatePath("/", "layout");
+  redirect("/members");
 }

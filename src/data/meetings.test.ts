@@ -29,6 +29,7 @@ describe("Meetings", () => {
       location: null,
       notes: null,
       privateNotes: null,
+      series: null,
       started: false,
       linkedGroups: [],
       attendees: [],
@@ -138,6 +139,8 @@ describe("Meetings", () => {
           location: null,
           attendeeCount: 0,
           linkedGroupNames: [],
+          inSeries: false,
+          changed: false,
         },
       ],
       past: [
@@ -149,6 +152,8 @@ describe("Meetings", () => {
           location: "Hall",
           attendeeCount: 0,
           linkedGroupNames: [],
+          inSeries: false,
+          changed: false,
         },
       ],
     });

@@ -2,11 +2,30 @@
 
 import { useActionState, useState } from "react";
 import type { Attendee } from "@/data/organiser-data";
+import { describeRepeat } from "@/meeting-series";
 import { createMeeting } from "../actions";
 import { AttendeeTable, LinkedGroupChips } from "../attendee-table";
 
 type Member = { id: string; name: string; email: string; groupIds: string[] };
 type Group = { id: string; name: string };
+
+/** The repeat rule in words as the Meeting page will show it, e.g. "Every 2 weeks on Tuesday." */
+function repeatHint(unit: string, every: string, date: string) {
+  const count = Number(every);
+  if (!Number.isInteger(count) || count < 1) return "";
+  // Weekly repeats fall on the first Meeting's weekday; before a date is
+  // picked there is none to name.
+  if (unit === "week" && !date) {
+    return count === 1 ? "Every week." : `Every ${count} weeks.`;
+  }
+  return `${describeRepeat({
+    // Noon UTC on the picked date, so the weekday is that date's.
+    anchorStartAt: new Date(`${date || "2000-01-01"}T12:00:00Z`),
+    timezone: "UTC",
+    intervalUnit: unit === "day" ? "day" : "week",
+    intervalCount: count,
+  })}.`;
+}
 
 export function NewMeetingForm({
   members,
@@ -21,6 +40,9 @@ export function NewMeetingForm({
   const [state, action, pending] = useActionState(createMeeting, {});
   const errors = state.fieldErrors ?? {};
   const values = state.values;
+  const [date, setDate] = useState(values?.date ?? "");
+  const [repeatUnit, setRepeatUnit] = useState(values?.repeatUnit ?? "");
+  const [repeatEvery, setRepeatEvery] = useState(values?.repeatEvery || "1");
   const [picked, setPicked] = useState<Member[]>([]);
   const [choice, setChoice] = useState("");
   const pickedIds = new Set(picked.map((m) => m.id));
@@ -82,7 +104,8 @@ export function NewMeetingForm({
           <input
             name="date"
             type="date"
-            defaultValue={values?.date}
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
             aria-invalid={Boolean(errors.start)}
           />
         </label>
@@ -112,6 +135,44 @@ export function NewMeetingForm({
         <span className="error">{errors.durationMinutes}</span>
       )}
       <p className="hint">Times are in {timezone}.</p>
+      <div className="field-row">
+        <label className="field">
+          Repeats
+          <select
+            name="repeatUnit"
+            value={repeatUnit}
+            onChange={(e) => setRepeatUnit(e.target.value)}
+          >
+            <option value="">Does not repeat</option>
+            <option value="day">Every so many days</option>
+            <option value="week">Every so many weeks</option>
+          </select>
+        </label>
+        {repeatUnit && (
+          <label className="field">
+            Every how many {repeatUnit === "day" ? "days" : "weeks"}
+            <input
+              name="repeatEvery"
+              type="number"
+              min={1}
+              step={1}
+              value={repeatEvery}
+              onChange={(e) => setRepeatEvery(e.target.value)}
+              aria-invalid={Boolean(errors.repeatEvery)}
+            />
+          </label>
+        )}
+      </div>
+      {errors.repeatEvery && (
+        <span className="error">{errors.repeatEvery}</span>
+      )}
+      {repeatUnit && (
+        <p className="hint">
+          {repeatHint(repeatUnit, repeatEvery, date)} With no end date; each
+          Meeting in the Series starts with the details and Attendees chosen
+          here.
+        </p>
+      )}
       <label className="field">
         Location
         <input name="location" defaultValue={values?.location} />

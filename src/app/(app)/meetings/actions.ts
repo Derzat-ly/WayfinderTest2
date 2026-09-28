@@ -13,6 +13,8 @@ const detailNames = [
   "location",
   "notes",
   "privateNotes",
+  "repeatUnit",
+  "repeatEvery",
 ] as const;
 
 export type MeetingDetails = Record<(typeof detailNames)[number], string>;

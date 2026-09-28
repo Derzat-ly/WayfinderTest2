@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  check,
   foreignKey,
   index,
   integer,
@@ -149,6 +150,87 @@ export const groupMembership = sqliteTable(
 );
 
 /**
+ * A Meeting Series: the details and Attendee choices each of its Meetings
+ * starts as a copy of. Occurrence n is worked out from the anchor, in the
+ * Series' own copy of the Organiser's timezone (ADR 0002).
+ */
+export const meetingSeries = sqliteTable(
+  "meeting_series",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organiserId: text("organiser_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    durationMinutes: integer("duration_minutes"),
+    location: text("location"),
+    notes: text("notes"),
+    privateNotes: text("private_notes"),
+    /** The first occurrence's start. */
+    anchorStartAt: integer("anchor_start_at", { mode: "timestamp_ms" }).notNull(),
+    timezone: text("timezone").notNull(),
+    intervalUnit: text("interval_unit", { enum: ["day", "week"] }).notNull(),
+    intervalCount: integer("interval_count").notNull(),
+    /** The catch-up cursor: the occurrence the Series produces next (ADR 0001). */
+    nextOccurrenceIndex: integer("next_occurrence_index").notNull().default(0),
+    endedAt: integer("ended_at", { mode: "timestamp_ms" }),
+    ...timestamps,
+  },
+  (t) => [
+    unique().on(t.organiserId, t.id),
+    check("meeting_series_interval_count_check", sql`${t.intervalCount} >= 1`),
+  ],
+);
+
+/** A Group linked to a Meeting Series, copied to each Meeting it produces. */
+export const seriesLinkedGroup = sqliteTable(
+  "series_linked_group",
+  {
+    organiserId: text("organiser_id").notNull(),
+    seriesId: text("series_id").notNull(),
+    groupId: text("group_id").notNull(),
+    ...timestamps,
+  },
+  (t) => [
+    primaryKey({ columns: [t.seriesId, t.groupId] }),
+    foreignKey({
+      columns: [t.organiserId, t.seriesId],
+      foreignColumns: [meetingSeries.organiserId, meetingSeries.id],
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [t.organiserId, t.groupId],
+      foreignColumns: [memberGroup.organiserId, memberGroup.id],
+    }).onDelete("cascade"),
+    index("series_linked_group_group_id_idx").on(t.groupId),
+  ],
+);
+
+/** A Member chosen individually for a Meeting Series. */
+export const seriesMember = sqliteTable(
+  "series_member",
+  {
+    organiserId: text("organiser_id").notNull(),
+    seriesId: text("series_id").notNull(),
+    memberId: text("member_id").notNull(),
+    ...timestamps,
+  },
+  (t) => [
+    primaryKey({ columns: [t.seriesId, t.memberId] }),
+    foreignKey({
+      columns: [t.organiserId, t.seriesId],
+      foreignColumns: [meetingSeries.organiserId, meetingSeries.id],
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [t.organiserId, t.memberId],
+      foreignColumns: [member.organiserId, member.id],
+    }).onDelete("cascade"),
+    index("series_member_member_id_idx").on(t.memberId),
+  ],
+);
+
+/**
  * A Meeting. The start is a UTC instant plus the Organiser's timezone copied
  * when the row was created, which is how it is shown from then on (ADR 0002).
  */
@@ -161,7 +243,7 @@ export const meeting = sqliteTable(
     organiserId: text("organiser_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    /** Set for one occurrence of a Meeting Series; its foreign key comes with that table. */
+    /** Set for one occurrence of a Meeting Series. */
     seriesId: text("series_id"),
     occurrenceIndex: integer("occurrence_index"),
     title: text("title").notNull(),
@@ -178,6 +260,11 @@ export const meeting = sqliteTable(
   (t) => [
     unique().on(t.organiserId, t.id),
     unique().on(t.seriesId, t.occurrenceIndex),
+    // What ending or deleting a Series does to its Meetings isn't decided yet.
+    foreignKey({
+      columns: [t.organiserId, t.seriesId],
+      foreignColumns: [meetingSeries.organiserId, meetingSeries.id],
+    }),
     index("meeting_organiser_id_start_at_idx").on(t.organiserId, t.startAt),
     index("meeting_organiser_id_finalised_at_start_at_idx").on(
       t.organiserId,

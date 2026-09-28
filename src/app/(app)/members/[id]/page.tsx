@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireOrganiserData } from "@/app-context";
 import { formatInZone } from "@/timezone";
+import { DeleteMemberButton } from "./delete-member-button";
 import { EditMemberForm } from "./edit-member-form";
 import { GroupCheckboxes } from "./group-checkboxes";
 
@@ -39,6 +40,14 @@ export default async function MemberPage({
           ))}
         </ul>
       )}
+      <DeleteMemberButton
+        member={{
+          id: member.id,
+          name: member.name,
+          groupCount: member.groups.length,
+          upcomingMeetingCount: member.upcomingMeetings.length,
+        }}
+      />
     </>
   );
 }

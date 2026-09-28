@@ -5,6 +5,7 @@ import { formatInZone } from "@/timezone";
 import { AddMemberForm } from "../../members/add-member-form";
 import { removeFromGroup } from "../actions";
 import { AddExistingMemberForm } from "./add-existing-member-form";
+import { DeleteGroupButton } from "./delete-group-button";
 
 export default async function GroupPage({
   params,
@@ -66,6 +67,13 @@ export default async function GroupPage({
           </tbody>
         </table>
       )}
+      <DeleteGroupButton
+        group={{
+          id: group.id,
+          name: group.name,
+          upcomingMeetingCount: group.upcomingMeetings.length,
+        }}
+      />
     </>
   );
 }

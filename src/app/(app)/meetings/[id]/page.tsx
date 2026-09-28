@@ -35,6 +35,12 @@ export default async function MeetingPage({
         <Link href="/meetings">Meetings</Link>
       </p>
       <h1>{meeting.title}</h1>
+      {meeting.series && (
+        <p className="hint">
+          Part of a Meeting Series: {meeting.series.repeats}. Changing this
+          Meeting&apos;s Attendees changes only this Meeting.
+        </p>
+      )}
       <dl className="details">
         <dt>When</dt>
         <dd>

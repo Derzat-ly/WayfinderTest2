@@ -17,10 +17,18 @@ import {
   meeting,
   meetingLinkedGroup,
   meetingMember,
+  meetingSeries,
   member,
   memberGroup,
+  seriesLinkedGroup,
+  seriesMember,
   user,
 } from "@/db/schema";
+import {
+  describeRepeat,
+  occurrenceStart,
+  SERIES_HORIZON_MS,
+} from "@/meeting-series";
 import { isIanaTimezone, zonedToInstant } from "@/timezone";
 
 export class SignedOutError extends Error {
@@ -55,14 +63,18 @@ export type Attendee = {
   email: string;
 } & (
   | { addedVia: "individual" }
-  | { addedVia: "copy" | "linked"; group: { id: string; name: string } }
+  | {
+      addedVia: "copy" | "linked";
+      /** `id` is NULL on a started Meeting's record once the Group is deleted. */
+      group: { id: string | null; name: string };
+    }
 );
 
 /** An Attendee of a Meeting that hasn't started, so always a current Member. */
 export type LiveAttendee = Attendee & { memberId: string };
 
 export type MeetingFieldErrors = Partial<
-  Record<"title" | "start" | "durationMinutes", string>
+  Record<"title" | "start" | "durationMinutes" | "repeatEvery", string>
 >;
 
 /**
@@ -274,11 +286,100 @@ export async function organiserDataFor(db: Db, organiserId: string) {
   }
 
   /**
+   * Creates a Series' next Meetings while they start within the horizon,
+   * or while it has no future Meeting yet, each a copy of the Series.
+   */
+  async function topUp(seriesId: string) {
+    const [series] = await db
+      .select()
+      .from(meetingSeries)
+      .where(
+        and(
+          eq(meetingSeries.organiserId, organiserId),
+          eq(meetingSeries.id, seriesId),
+        ),
+      );
+    const now = Date.now();
+    const [future] = await db
+      .select({ id: meeting.id })
+      .from(meeting)
+      .where(and(eq(meeting.seriesId, seriesId), gt(meeting.startAt, new Date(now))))
+      .limit(1);
+    let hasFuture = future !== undefined;
+    const memberIds = (
+      await db
+        .select({ id: seriesMember.memberId })
+        .from(seriesMember)
+        .where(eq(seriesMember.seriesId, seriesId))
+    ).map((m) => m.id);
+    const groupIds = (
+      await db
+        .select({ id: seriesLinkedGroup.groupId })
+        .from(seriesLinkedGroup)
+        .where(eq(seriesLinkedGroup.seriesId, seriesId))
+    ).map((g) => g.id);
+    for (let n = series.nextOccurrenceIndex; ; n++) {
+      const startAt = occurrenceStart(series, n);
+      if (hasFuture && startAt.getTime() > now + SERIES_HORIZON_MS) break;
+      hasFuture ||= startAt.getTime() > now;
+      await db.transaction(async (tx) => {
+        const [row] = await tx
+          .insert(meeting)
+          .values({
+            organiserId,
+            seriesId,
+            occurrenceIndex: n,
+            title: series.title,
+            startAt,
+            timezone: series.timezone,
+            durationMinutes: series.durationMinutes,
+            location: series.location,
+            notes: series.notes,
+            privateNotes: series.privateNotes,
+          })
+          .returning({ id: meeting.id });
+        if (memberIds.length > 0) {
+          await tx.insert(meetingMember).values(
+            memberIds.map((memberId) => ({
+              organiserId,
+              meetingId: row.id,
+              memberId,
+            })),
+          );
+        }
+        if (groupIds.length > 0) {
+          await tx.insert(meetingLinkedGroup).values(
+            groupIds.map((groupId) => ({
+              organiserId,
+              meetingId: row.id,
+              groupId,
+            })),
+          );
+        }
+        await tx
+          .update(meetingSeries)
+          .set({ nextOccurrenceIndex: n + 1 })
+          .where(eq(meetingSeries.id, seriesId));
+      });
+    }
+  }
+
+  /**
    * The lazy catch-up (ADR 0001), run before this request touches
-   * anything: finalise every Meeting whose start has passed.
+   * anything: top up every Series' Meetings, then finalise every Meeting
+   * whose start has passed.
    */
   async function catchUp() {
-    // Topping up Meeting Series windows (#21) goes here, before finalising.
+    const running = await db
+      .select({ id: meetingSeries.id })
+      .from(meetingSeries)
+      .where(
+        and(
+          eq(meetingSeries.organiserId, organiserId),
+          isNull(meetingSeries.endedAt),
+        ),
+      );
+    for (const { id } of running) await topUp(id);
     const due = await db
       .select({ id: meeting.id })
       .from(meeting)
@@ -306,8 +407,8 @@ export async function organiserDataFor(db: Db, organiserId: string) {
           eq(meetingLinkedGroup.meetingId, meetingId),
         ),
       );
-    // Both are set at finalisation; only a Group delete (not built yet) clears `id`.
-    return rows.map(({ id, name }) => ({ id: id!, name: name! }));
+    // The name is set at finalisation; `id` is NULL once the Group is deleted.
+    return rows.map(({ id, name }) => ({ id, name: name! }));
   }
 
   /** A finalised Meeting's Attendees from its fixed record, by name. */
@@ -318,7 +419,10 @@ export async function organiserDataFor(db: Db, organiserId: string) {
         name: attendee.name,
         email: attendee.email,
         addedVia: attendee.addedVia,
+        // Led by the link's own id: Drizzle nulls a joined object whose first
+        // field is NULL, and `group_id` is once the Group is deleted.
         link: {
+          id: meetingLinkedGroup.id,
           groupId: meetingLinkedGroup.groupId,
           groupName: meetingLinkedGroup.groupName,
         },
@@ -352,7 +456,7 @@ export async function organiserDataFor(db: Db, organiserId: string) {
         return {
           ...a,
           addedVia,
-          group: { id: link.groupId!, name: link.groupName! },
+          group: { id: link.groupId, name: link.groupName! },
         };
       }
       if (addedVia === "copy" && copiedFrom) {
@@ -360,6 +464,70 @@ export async function organiserDataFor(db: Db, organiserId: string) {
       }
       return { ...a, addedVia: "individual" };
     });
+  }
+
+  /**
+   * Each Meeting's and each Series' Attendee choices as a comparable key, so
+   * a Meeting whose choices differ from its Series' can be marked changed.
+   * A copy of a Group is its own kind of choice, which a Series never has.
+   */
+  async function choicesOf(meetingIds: string[], seriesIds: string[]) {
+    const keys = new Map<string, string[]>();
+    const add = (id: string, key: string) =>
+      keys.set(id, [...(keys.get(id) ?? []), key]);
+    for (const m of await db
+      .select({
+        id: meetingMember.meetingId,
+        memberId: meetingMember.memberId,
+        copiedFrom: meetingMember.copiedFromGroupId,
+      })
+      .from(meetingMember)
+      .where(
+        and(
+          eq(meetingMember.organiserId, organiserId),
+          inArray(meetingMember.meetingId, meetingIds),
+        ),
+      )) {
+      add(m.id, `${m.copiedFrom ? "copy" : "member"}:${m.memberId}`);
+    }
+    for (const g of await db
+      .select({ id: meetingLinkedGroup.meetingId, groupId: meetingLinkedGroup.groupId })
+      .from(meetingLinkedGroup)
+      .where(
+        and(
+          eq(meetingLinkedGroup.organiserId, organiserId),
+          inArray(meetingLinkedGroup.meetingId, meetingIds),
+        ),
+      )) {
+      // A frozen link's Group id is NULL once the Group is deleted, as the
+      // Series' own link then is.
+      if (g.groupId) add(g.id, `group:${g.groupId}`);
+    }
+    for (const m of await db
+      .select({ id: seriesMember.seriesId, memberId: seriesMember.memberId })
+      .from(seriesMember)
+      .where(
+        and(
+          eq(seriesMember.organiserId, organiserId),
+          inArray(seriesMember.seriesId, seriesIds),
+        ),
+      )) {
+      add(m.id, `member:${m.memberId}`);
+    }
+    for (const g of await db
+      .select({ id: seriesLinkedGroup.seriesId, groupId: seriesLinkedGroup.groupId })
+      .from(seriesLinkedGroup)
+      .where(
+        and(
+          eq(seriesLinkedGroup.organiserId, organiserId),
+          inArray(seriesLinkedGroup.seriesId, seriesIds),
+        ),
+      )) {
+      add(g.id, `group:${g.groupId}`);
+    }
+    return new Map(
+      [...keys].map(([id, choices]) => [id, choices.sort().join(" ")]),
+    );
   }
 
   /** Upcoming Meetings with a live link to a Group, soonest first. */
@@ -439,6 +607,17 @@ export async function organiserDataFor(db: Db, organiserId: string) {
         .from(member)
         .where(and(eq(member.organiserId, organiserId), eq(member.id, id)));
       if (!row) return undefined;
+      const groups = await db
+        .select({ id: memberGroup.id, name: memberGroup.name })
+        .from(groupMembership)
+        .innerJoin(memberGroup, eq(memberGroup.id, groupMembership.groupId))
+        .where(
+          and(
+            eq(groupMembership.organiserId, organiserId),
+            eq(groupMembership.memberId, id),
+          ),
+        )
+        .orderBy(asc(memberGroup.name));
       const upcoming = await db
         .select({
           id: meeting.id,
@@ -457,6 +636,7 @@ export async function organiserDataFor(db: Db, organiserId: string) {
       const attendees = await attendeesOf(upcoming.map((m) => m.id));
       return {
         ...row,
+        groups,
         upcomingMeetings: upcoming.filter((m) =>
           attendees.get(m.id)!.some((a) => a.memberId === id),
         ),
@@ -488,6 +668,22 @@ export async function organiserDataFor(db: Db, organiserId: string) {
         .where(and(eq(member.organiserId, organiserId), eq(member.id, id)))
         .returning({ id: member.id });
       if (updated.length === 0) {
+        return { ok: false as const, notFound: true as const };
+      }
+      return { ok: true as const };
+    },
+
+    /**
+     * A hard delete. The schema's cascades take the Member out of every
+     * Group and upcoming Meeting; a started Meeting's record keeps their
+     * snapshot with its Member id nulled.
+     */
+    async deleteMember(id: string) {
+      const deleted = await db
+        .delete(member)
+        .where(and(eq(member.organiserId, organiserId), eq(member.id, id)))
+        .returning({ id: member.id });
+      if (deleted.length === 0) {
         return { ok: false as const, notFound: true as const };
       }
       return { ok: true as const };
@@ -626,6 +822,40 @@ export async function organiserDataFor(db: Db, organiserId: string) {
       return { ok: true as const, group: created };
     },
 
+    /**
+     * Counts as every Member leaving the Group. Links on Meetings not yet
+     * started go; started Meetings keep theirs frozen, with the Group's name
+     * and a NULL Group id. Copies of it stay, their mark cleared.
+     */
+    async deleteGroup(id: string) {
+      if (!(await ownsGroup(id))) {
+        return { ok: false as const, notFound: true as const };
+      }
+      await db.transaction(async (tx) => {
+        const unstarted = tx
+          .select({ id: meeting.id })
+          .from(meeting)
+          .where(
+            and(eq(meeting.organiserId, organiserId), isNull(meeting.finalisedAt)),
+          );
+        await tx
+          .delete(meetingLinkedGroup)
+          .where(
+            and(
+              eq(meetingLinkedGroup.organiserId, organiserId),
+              eq(meetingLinkedGroup.groupId, id),
+              inArray(meetingLinkedGroup.meetingId, unstarted),
+            ),
+          );
+        await tx
+          .delete(memberGroup)
+          .where(
+            and(eq(memberGroup.organiserId, organiserId), eq(memberGroup.id, id)),
+          );
+      });
+      return { ok: true as const };
+    },
+
     /** Every Group, for the Member page's membership checkboxes. */
     async groupChoicesFor(memberId: string) {
       const rows = await db
@@ -675,6 +905,9 @@ export async function organiserDataFor(db: Db, organiserId: string) {
         location?: string;
         notes?: string;
         privateNotes?: string;
+        /** "day" or "week" to set up a Meeting Series; empty for a one-off. */
+        repeatUnit?: string;
+        repeatEvery?: string;
       },
       {
         memberIds = [],
@@ -691,6 +924,13 @@ export async function organiserDataFor(db: Db, organiserId: string) {
       if (duration && !/^[1-9]\d*$/.test(duration)) {
         fieldErrors.durationMinutes = "Enter the duration in whole minutes.";
       }
+      const repeats =
+        details.repeatUnit === "day" || details.repeatUnit === "week";
+      const repeatEvery = details.repeatEvery?.trim() ?? "";
+      if (repeats && !/^[1-9]\d*$/.test(repeatEvery)) {
+        fieldErrors.repeatEvery =
+          "Enter how many days or weeks apart, as a whole number.";
+      }
       if (Object.keys(fieldErrors).length > 0) {
         return { ok: false as const, fieldErrors };
       }
@@ -701,19 +941,70 @@ export async function organiserDataFor(db: Db, organiserId: string) {
         .select({ timezone: user.timezone })
         .from(user)
         .where(eq(user.id, organiserId));
+      const shared = {
+        organiserId,
+        title,
+        timezone,
+        durationMinutes: duration ? Number(duration) : null,
+        location: details.location?.trim() || null,
+        notes: details.notes?.trim() || null,
+        privateNotes: details.privateNotes?.trim() || null,
+      };
+      const startAt = zonedToInstant(details.date, details.time, timezone);
+      if (repeats) {
+        const series = await db.transaction(async (tx) => {
+          const [row] = await tx
+            .insert(meetingSeries)
+            .values({
+              ...shared,
+              anchorStartAt: startAt,
+              intervalUnit: details.repeatUnit as "day" | "week",
+              intervalCount: Number(repeatEvery),
+            })
+            .returning({ id: meetingSeries.id });
+          if (memberIds.length > 0) {
+            await tx
+              .insert(seriesMember)
+              .values(
+                memberIds.map((memberId) => ({
+                  organiserId,
+                  seriesId: row.id,
+                  memberId,
+                })),
+              )
+              .onConflictDoNothing({
+                target: [seriesMember.seriesId, seriesMember.memberId],
+              });
+          }
+          if (groupIds.length > 0) {
+            await tx
+              .insert(seriesLinkedGroup)
+              .values(
+                groupIds.map((groupId) => ({
+                  organiserId,
+                  seriesId: row.id,
+                  groupId,
+                })),
+              )
+              .onConflictDoNothing({
+                target: [seriesLinkedGroup.seriesId, seriesLinkedGroup.groupId],
+              });
+          }
+          return row;
+        });
+        await topUp(series.id);
+        const [first] = await db
+          .select({ id: meeting.id })
+          .from(meeting)
+          .where(
+            and(eq(meeting.seriesId, series.id), eq(meeting.occurrenceIndex, 0)),
+          );
+        return { ok: true as const, meeting: first };
+      }
       const created = await db.transaction(async (tx) => {
         const [row] = await tx
           .insert(meeting)
-          .values({
-            organiserId,
-            title,
-            startAt: zonedToInstant(details.date, details.time, timezone),
-            timezone,
-            durationMinutes: duration ? Number(duration) : null,
-            location: details.location?.trim() || null,
-            notes: details.notes?.trim() || null,
-            privateNotes: details.privateNotes?.trim() || null,
-          })
+          .values({ ...shared, startAt })
           .returning({ id: meeting.id });
         if (memberIds.length > 0) {
           await tx
@@ -758,6 +1049,7 @@ export async function organiserDataFor(db: Db, organiserId: string) {
           timezone: meeting.timezone,
           location: meeting.location,
           finalisedAt: meeting.finalisedAt,
+          seriesId: meeting.seriesId,
         })
         .from(meeting)
         .where(eq(meeting.organiserId, organiserId))
@@ -793,8 +1085,16 @@ export async function organiserDataFor(db: Db, organiserId: string) {
           ),
         )
         .orderBy(asc(linkName));
-      const listed = rows.map(({ finalisedAt, ...m }) => ({
+      const choices = await choicesOf(
+        rows.filter((m) => m.seriesId !== null).map((m) => m.id),
+        [...new Set(rows.map((m) => m.seriesId).filter((id) => id !== null))],
+      );
+      const listed = rows.map(({ finalisedAt, seriesId, ...m }) => ({
         ...m,
+        inSeries: seriesId !== null,
+        changed:
+          seriesId !== null &&
+          (choices.get(m.id) ?? "") !== (choices.get(seriesId) ?? ""),
         attendeeCount: finalisedAt
           ? (recorded.get(m.id) ?? 0)
           : live.get(m.id)!.length,
@@ -821,11 +1121,22 @@ export async function organiserDataFor(db: Db, organiserId: string) {
           notes: meeting.notes,
           privateNotes: meeting.privateNotes,
           finalisedAt: meeting.finalisedAt,
+          series: {
+            anchorStartAt: meetingSeries.anchorStartAt,
+            timezone: meetingSeries.timezone,
+            intervalUnit: meetingSeries.intervalUnit,
+            intervalCount: meetingSeries.intervalCount,
+          },
         })
         .from(meeting)
+        .leftJoin(meetingSeries, eq(meetingSeries.id, meeting.seriesId))
         .where(and(eq(meeting.organiserId, organiserId), eq(meeting.id, id)));
       if (!row) return undefined;
-      const { finalisedAt, ...details } = row;
+      const { finalisedAt, series, ...rest } = row;
+      const details = {
+        ...rest,
+        series: series && { repeats: describeRepeat(series) },
+      };
       const linkedGroups = finalisedAt
         ? await frozenLinksOf(id)
         : await db

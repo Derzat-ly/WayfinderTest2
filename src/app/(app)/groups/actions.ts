@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { requireOrganiserData } from "@/app-context";
 
 /** Membership reaches Groups, Members and, through Linked Groups, Meetings. */
@@ -60,4 +61,11 @@ export async function setGroupMembership(
     await data.removeFromGroup(groupId, memberId);
   }
   revalidateMembership();
+}
+
+export async function deleteGroup(id: string) {
+  const data = await requireOrganiserData();
+  await data.deleteGroup(id);
+  revalidateMembership();
+  redirect("/groups");
 }

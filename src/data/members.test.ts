@@ -100,6 +100,7 @@ describe("Members", () => {
       email: "ann.smith@x.com",
       phone: "07700 900123",
       notes: "Prefers mornings",
+      groups: [],
       upcomingMeetings: [],
     });
   });
@@ -155,6 +156,189 @@ describe("Members", () => {
       name: "Ann Lee",
       email: "ann@x.com",
     });
+  });
+});
+
+/** An Organiser whose every `request()` is a fresh request, as a page load is. */
+async function organiserMakingRequests(
+  app: Awaited<ReturnType<typeof createTestApp>>,
+) {
+  const headers = await app.signUp({ name: "Ada", email: "ada@example.com" });
+  return { request: () => app.organiserData(headers) };
+}
+
+describe("Deleting a Member", () => {
+  it("tells the Organiser how many Groups and upcoming Meetings the Member will leave", async () => {
+    const app = await createTestApp();
+    const ada = await organiserMakingRequests(app);
+    const setup = await ada.request();
+    const choir = await setup.createGroup("Choir");
+    const band = await setup.createGroup("Band");
+    await setup.createGroup("Board");
+    if (!choir.ok || !band.ok) throw new Error("setup failed");
+    const ann = await setup.addMember(
+      { name: "Ann Lee", email: "ann@x.com" },
+      { groupId: choir.group.id },
+    );
+    if (!ann.ok) throw new Error("setup failed");
+    await setup.addToGroup(band.group.id, ann.member.id);
+    await setup.createMeeting(
+      { title: "Concert", date: "2099-07-01", time: "19:30" },
+      { groupIds: [choir.group.id] },
+    );
+    await setup.createMeeting(
+      { title: "Lesson", date: "2099-06-01", time: "10:00" },
+      { memberIds: [ann.member.id] },
+    );
+    await setup.createMeeting(
+      { title: "Launch", date: "2001-01-10", time: "09:00" },
+      { memberIds: [ann.member.id] },
+    );
+
+    const shown = await (await ada.request()).member(ann.member.id);
+
+    expect(shown?.groups).toEqual([
+      { id: band.group.id, name: "Band" },
+      { id: choir.group.id, name: "Choir" },
+    ]);
+    expect(shown?.upcomingMeetings).toHaveLength(2);
+  });
+
+  it("removes the Member from the Members list, every Group, and every upcoming Meeting, whether added individually or through a copy", async () => {
+    const app = await createTestApp();
+    const ada = await organiserMakingRequests(app);
+    const setup = await ada.request();
+    const choir = await setup.createGroup("Choir");
+    if (!choir.ok) throw new Error("setup failed");
+    const ann = await setup.addMember(
+      { name: "Ann Lee", email: "ann@x.com" },
+      { groupId: choir.group.id },
+    );
+    const ben = await setup.addMember(
+      { name: "Ben Ng", email: "ben@x.com" },
+      { groupId: choir.group.id },
+    );
+    if (!ann.ok || !ben.ok) throw new Error("setup failed");
+    const lesson = await setup.createMeeting(
+      { title: "Lesson", date: "2099-06-01", time: "10:00" },
+      { memberIds: [ann.member.id, ben.member.id] },
+    );
+    const concert = await setup.createMeeting(
+      { title: "Concert", date: "2099-07-01", time: "19:30" },
+      { groupIds: [choir.group.id] },
+    );
+    if (!lesson.ok || !concert.ok) throw new Error("setup failed");
+    // Removing Ben turns the Choir link into a copy, so Ann is on it as a copy.
+    await setup.removeAttendee(concert.meeting.id, ben.member.id, {
+      confirmCopy: true,
+    });
+
+    const deleted = await (await ada.request()).deleteMember(ann.member.id);
+    const after = await ada.request();
+
+    expect(deleted).toEqual({ ok: true });
+    expect((await after.members()).map((m) => m.name)).toEqual(["Ben Ng"]);
+    expect(await after.member(ann.member.id)).toBeUndefined();
+    expect((await after.group(choir.group.id))?.members).toEqual([
+      { id: ben.member.id, name: "Ben Ng", email: "ben@x.com" },
+    ]);
+    expect(
+      (await after.meeting(lesson.meeting.id))?.attendees.map((a) => a.name),
+    ).toEqual(["Ben Ng"]);
+    expect((await after.meeting(concert.meeting.id))?.attendees).toEqual([]);
+  });
+
+  it("counts as leaving a Linked Group, so the link on an upcoming Meeting stays live", async () => {
+    const app = await createTestApp();
+    const ada = await organiserMakingRequests(app);
+    const setup = await ada.request();
+    const choir = await setup.createGroup("Choir");
+    if (!choir.ok) throw new Error("setup failed");
+    const ann = await setup.addMember(
+      { name: "Ann Lee", email: "ann@x.com" },
+      { groupId: choir.group.id },
+    );
+    await setup.addMember(
+      { name: "Ben Ng", email: "ben@x.com" },
+      { groupId: choir.group.id },
+    );
+    if (!ann.ok) throw new Error("setup failed");
+    const concert = await setup.createMeeting(
+      { title: "Concert", date: "2099-07-01", time: "19:30" },
+      { groupIds: [choir.group.id] },
+    );
+    if (!concert.ok) throw new Error("setup failed");
+
+    await (await ada.request()).deleteMember(ann.member.id);
+    const shown = await (await ada.request()).meeting(concert.meeting.id);
+
+    expect(shown?.linkedGroups).toEqual([
+      { id: choir.group.id, name: "Choir", kind: "live" },
+    ]);
+    expect(shown?.attendees).toMatchObject([
+      { name: "Ben Ng", addedVia: "linked" },
+    ]);
+  });
+
+  it("leaves a past Meeting listing them with their details at its start, as a deleted Member", async () => {
+    const app = await createTestApp();
+    const ada = await organiserMakingRequests(app);
+    const setup = await ada.request();
+    const ann = await setup.addMember({ name: "Ann Lee", email: "ann@x.com" });
+    if (!ann.ok) throw new Error("setup failed");
+    const launch = await setup.createMeeting(
+      { title: "Launch", date: "2001-01-10", time: "09:00" },
+      { memberIds: [ann.member.id] },
+    );
+    if (!launch.ok) throw new Error("setup failed");
+    const later = await ada.request();
+    await later.updateMember(ann.member.id, {
+      name: "Ann Lee-Smith",
+      email: "ann.smith@x.com",
+      phone: "",
+      notes: "",
+    });
+
+    await later.deleteMember(ann.member.id);
+    const shown = await (await ada.request()).meeting(launch.meeting.id);
+
+    expect(shown).toMatchObject({
+      started: true,
+      attendees: [
+        {
+          memberId: null,
+          name: "Ann Lee",
+          email: "ann@x.com",
+          addedVia: "individual",
+        },
+      ],
+    });
+  });
+
+  it("frees the Member's email for a new Member straight away", async () => {
+    const app = await createTestApp();
+    const data = await signedInOrganiser(app);
+    const ann = await data.addMember({ name: "Ann Lee", email: "ann@x.com" });
+    if (!ann.ok) throw new Error("setup failed");
+
+    await data.deleteMember(ann.member.id);
+    const readded = await data.addMember({ name: "Ann Lee", email: "Ann@x.com" });
+
+    expect(readded.ok).toBe(true);
+    expect((await data.members()).map((m) => m.email)).toEqual(["Ann@x.com"]);
+  });
+
+  it("won't delete another Organiser's Member", async () => {
+    const app = await createTestApp();
+    const ada = await signedInOrganiser(app, "ada@example.com");
+    const grace = await signedInOrganiser(app, "grace@example.com");
+    const adasAnn = await ada.addMember({ name: "Ann Lee", email: "ann@x.com" });
+    if (!adasAnn.ok) throw new Error("setup failed");
+
+    const graceDeletes = await grace.deleteMember(adasAnn.member.id);
+
+    expect(graceDeletes).toEqual({ ok: false, notFound: true });
+    expect((await ada.members()).map((m) => m.name)).toEqual(["Ann Lee"]);
   });
 });
 

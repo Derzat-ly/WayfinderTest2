@@ -57,6 +57,16 @@ export function zonedToInstant(
   return new Date(readsAsWall[0] ?? wallAsUtc - offsetBefore);
 }
 
+/** The inverse of `zonedToInstant`: `timezone`'s wall-clock date and time at `instant`. */
+export function instantToZoned(
+  instant: Date,
+  timezone: string,
+): { date: string; time: string } {
+  const wall = new Date(instant.getTime() + offsetAt(instant, timezone));
+  const [date, rest] = wall.toISOString().split("T");
+  return { date, time: rest.slice(0, 5) };
+}
+
 /** `instant` as `timezone`'s wall clock reads it, e.g. "Wed 1 Jul 2099, 19:30". */
 export function formatInZone(instant: Date, timezone: string): string {
   const p = Object.fromEntries(

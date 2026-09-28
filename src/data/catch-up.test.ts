@@ -246,6 +246,75 @@ describe("Lazy catch-up", () => {
     ]);
   });
 
+  it("finalises a Meeting that has just started before a Member on it is deleted, so it keeps them", async () => {
+    const app = await createTestApp();
+    const ada = await signedInOrganiser(app);
+    const setup = await ada.request();
+    const ann = await setup.addMember({ name: "Ann Lee", email: "ann@x.com" });
+    if (!ann.ok) throw new Error("setup failed");
+    const meetingId = await meetingAtTen(setup, { memberIds: [ann.member.id] });
+
+    vi.setSystemTime(AFTER_START);
+    await (await ada.request()).deleteMember(ann.member.id);
+
+    expect(await (await ada.request()).meeting(meetingId)).toMatchObject({
+      started: true,
+      attendees: [{ memberId: null, name: "Ann Lee", email: "ann@x.com" }],
+    });
+  });
+
+  it("keeps a started Meeting's frozen link to a Group after the Group is deleted, by name and with the same Attendees", async () => {
+    const app = await createTestApp();
+    const ada = await signedInOrganiser(app);
+    const setup = await ada.request();
+    const choir = await setup.createGroup("Choir");
+    if (!choir.ok) throw new Error("setup failed");
+    await setup.addMember(
+      { name: "Ann Lee", email: "ann@x.com" },
+      { groupId: choir.group.id },
+    );
+    const meetingId = await meetingAtTen(setup, { groupIds: [choir.group.id] });
+
+    vi.setSystemTime(AFTER_START);
+    await ada.request();
+    await (await ada.request()).deleteGroup(choir.group.id);
+    const later = await ada.request();
+
+    expect(await later.meeting(meetingId)).toMatchObject({
+      started: true,
+      linkedGroups: [{ name: "Choir", kind: "live" }],
+      attendees: [
+        { name: "Ann Lee", addedVia: "linked", group: { name: "Choir" } },
+      ],
+    });
+    expect((await later.meetings()).past).toMatchObject([
+      { title: "Rehearsal", attendeeCount: 1, linkedGroupNames: ["Choir"] },
+    ]);
+  });
+
+  it("finalises a Meeting that has just started before a Group it links is deleted, so it keeps the link and its Attendees", async () => {
+    const app = await createTestApp();
+    const ada = await signedInOrganiser(app);
+    const setup = await ada.request();
+    const choir = await setup.createGroup("Choir");
+    if (!choir.ok) throw new Error("setup failed");
+    await setup.addMember(
+      { name: "Ann Lee", email: "ann@x.com" },
+      { groupId: choir.group.id },
+    );
+    const meetingId = await meetingAtTen(setup, { groupIds: [choir.group.id] });
+
+    vi.setSystemTime(AFTER_START);
+    // The first request since the start is the one that deletes.
+    await (await ada.request()).deleteGroup(choir.group.id);
+
+    expect(await (await ada.request()).meeting(meetingId)).toMatchObject({
+      started: true,
+      linkedGroups: [{ name: "Choir" }],
+      attendees: [{ name: "Ann Lee", addedVia: "linked" }],
+    });
+  });
+
   it("only catches up the signed-in Organiser's Meetings", async () => {
     const app = await createTestApp();
     const ada = await signedInOrganiser(app, { email: "ada@example.com" });
