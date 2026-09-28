@@ -59,7 +59,15 @@ export default async function MeetingsPage({
                 <td>
                   <Link href={`/meetings/${meeting.id}`}>{meeting.title}</Link>
                 </td>
-                <td>{meeting.attendeeCount}</td>
+                <td>
+                  {meeting.attendeeCount}
+                  {meeting.linkedGroupNames.length > 0 && (
+                    <span className="hint">
+                      {" "}
+                      · {meeting.linkedGroupNames.join(", ")}
+                    </span>
+                  )}
+                </td>
                 <td>{meeting.location}</td>
               </tr>
             ))}

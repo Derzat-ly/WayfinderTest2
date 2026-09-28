@@ -19,7 +19,7 @@ export type MeetingDetails = Record<(typeof detailNames)[number], string>;
 
 export type CreateMeetingState = {
   fieldErrors?: MeetingFieldErrors;
-  /** A picked Member is gone. */
+  /** A picked Member or Group is gone. */
   notFound?: boolean;
   /** What was typed, so a refused create keeps it. */
   values?: MeetingDetails;
@@ -35,6 +35,7 @@ export async function createMeeting(
   ) as MeetingDetails;
   const result = await data.createMeeting(values, {
     memberIds: form.getAll("memberId").map(String),
+    groupIds: form.getAll("groupId").map(String),
   });
   if (!result.ok) return { ...result, values };
   revalidatePath("/meetings", "layout");
@@ -54,12 +55,43 @@ export async function addAttendee(
     String(form.get("memberId") ?? ""),
   );
   if (!result.ok) return result;
-  revalidatePath("/meetings", "layout");
+  revalidatePath("/", "layout");
   return {};
 }
 
-export async function removeAttendee(meetingId: string, memberId: string) {
+/**
+ * `confirmCopy` is set once the Organiser has agreed that removing a Member
+ * who came through a Linked Group turns that link into a copy.
+ */
+export async function removeAttendee(
+  meetingId: string,
+  memberId: string,
+  confirmCopy: boolean,
+) {
   const data = await requireOrganiserData();
-  await data.removeAttendee(meetingId, memberId);
-  revalidatePath("/meetings", "layout");
+  await data.removeAttendee(meetingId, memberId, { confirmCopy });
+  revalidatePath("/", "layout");
+}
+
+export type LinkGroupState = { notFound?: boolean };
+
+export async function linkGroup(
+  meetingId: string,
+  _previous: LinkGroupState,
+  form: FormData,
+): Promise<LinkGroupState> {
+  const data = await requireOrganiserData();
+  const result = await data.linkGroup(
+    meetingId,
+    String(form.get("groupId") ?? ""),
+  );
+  if (!result.ok) return result;
+  revalidatePath("/", "layout");
+  return {};
+}
+
+export async function unlinkGroup(meetingId: string, groupId: string) {
+  const data = await requireOrganiserData();
+  await data.unlinkGroup(meetingId, groupId);
+  revalidatePath("/", "layout");
 }

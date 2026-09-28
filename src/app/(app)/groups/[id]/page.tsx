@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireOrganiserData } from "@/app-context";
+import { formatInZone } from "@/timezone";
 import { AddMemberForm } from "../../members/add-member-form";
 import { removeFromGroup } from "../actions";
 import { AddExistingMemberForm } from "./add-existing-member-form";
@@ -23,6 +24,16 @@ export default async function GroupPage({
         <Link href="/groups">Groups</Link>
       </p>
       <h1>{group.name}</h1>
+      {group.upcomingMeetings.length > 0 && (
+        <section className="linked-meetings">
+          <p className="warning">
+            Linked to {group.upcomingMeetings.length} upcoming{" "}
+            {group.upcomingMeetings.length === 1 ? "Meeting" : "Meetings"}:
+            changes here reach them straight away.
+          </p>
+          <MeetingList meetings={group.upcomingMeetings} />
+        </section>
+      )}
       <AddExistingMemberForm groupId={group.id} candidates={candidates} />
       <AddMemberForm groupId={group.id} />
       {group.members.length === 0 ? (
@@ -56,5 +67,22 @@ export default async function GroupPage({
         </table>
       )}
     </>
+  );
+}
+
+function MeetingList({
+  meetings,
+}: {
+  meetings: { id: string; title: string; startAt: Date; timezone: string }[];
+}) {
+  return (
+    <ul>
+      {meetings.map((m) => (
+        <li key={m.id}>
+          <Link href={`/meetings/${m.id}`}>{m.title}</Link>{" "}
+          <span className="hint">{formatInZone(m.startAt, m.timezone)}</span>
+        </li>
+      ))}
+    </ul>
   );
 }

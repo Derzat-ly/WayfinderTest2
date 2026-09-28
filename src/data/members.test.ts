@@ -100,6 +100,7 @@ describe("Members", () => {
       email: "ann.smith@x.com",
       phone: "07700 900123",
       notes: "Prefers mornings",
+      upcomingMeetings: [],
     });
   });
 
@@ -156,3 +157,51 @@ describe("Members", () => {
     });
   });
 });
+
+describe("A Member's upcoming Meetings", () => {
+  it("lists the upcoming Meetings a Member is on, individually or through a Linked Group, leaving out past ones", async () => {
+    const app = await createTestApp();
+    const data = await signedInOrganiser(app);
+    const choir = await data.createGroup("Choir");
+    if (!choir.ok) throw new Error("setup failed");
+    const ann = await data.addMember(
+      { name: "Ann Lee", email: "ann@x.com" },
+      { groupId: choir.group.id },
+    );
+    if (!ann.ok) throw new Error("setup failed");
+    const concert = await data.createMeeting(
+      { title: "Concert", date: "2099-07-01", time: "19:30" },
+      { groupIds: [choir.group.id] },
+    );
+    const lesson = await data.createMeeting(
+      { title: "Lesson", date: "2099-06-01", time: "10:00" },
+      { memberIds: [ann.member.id] },
+    );
+    await data.createMeeting(
+      { title: "Launch", date: "2001-01-10", time: "09:00" },
+      { memberIds: [ann.member.id], groupIds: [choir.group.id] },
+    );
+    await data.createMeeting({
+      title: "Board",
+      date: "2099-08-01",
+      time: "09:00",
+    });
+    if (!concert.ok || !lesson.ok) throw new Error("setup failed");
+
+    expect((await data.member(ann.member.id))?.upcomingMeetings).toEqual([
+      {
+        id: lesson.meeting.id,
+        title: "Lesson",
+        startAt: new Date("2099-06-01T10:00:00Z"),
+        timezone: "UTC",
+      },
+      {
+        id: concert.meeting.id,
+        title: "Concert",
+        startAt: new Date("2099-07-01T19:30:00Z"),
+        timezone: "UTC",
+      },
+    ]);
+  });
+});
+

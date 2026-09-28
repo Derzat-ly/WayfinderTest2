@@ -29,6 +29,13 @@
       "when": 1790596430014,
       "tag": "0003_meeting",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1790597081200,
+      "tag": "0004_linked_group",
+      "breakpoints": true
     }
   ]
 }

@@ -34,7 +34,7 @@ export async function addMember(
   });
   if (!result.ok) return { ...result, values };
   revalidatePath("/members");
-  if (groupId) revalidatePath("/groups", "layout");
+  if (groupId) revalidatePath("/", "layout");
   return { added: true };
 }
 

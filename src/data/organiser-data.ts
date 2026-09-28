@@ -1,9 +1,10 @@
-import { and, asc, count, eq, inArray } from "drizzle-orm";
+import { and, asc, count, eq, gt, inArray } from "drizzle-orm";
 import type { Auth } from "@/auth/create-auth";
 import type { Db } from "@/db/client";
 import {
   groupMembership,
   meeting,
+  meetingLinkedGroup,
   meetingMember,
   member,
   memberGroup,
@@ -36,6 +37,15 @@ function checkMemberFields(details: { name: string; email: string }) {
   return { name, email, emailKey: email.toLowerCase(), fieldErrors };
 }
 
+export type Attendee = {
+  memberId: string;
+  name: string;
+  email: string;
+} & (
+  | { addedVia: "individual" }
+  | { addedVia: "copy" | "linked"; group: { id: string; name: string } }
+);
+
 export type MeetingFieldErrors = Partial<
   Record<"title" | "start" | "durationMinutes", string>
 >;
@@ -63,16 +73,22 @@ export function createOrganiserData({ auth, db }: { auth: Auth; db: Db }) {
     }
 
     async function ownsGroup(groupId: string) {
-      const [row] = await db
-        .select({ id: memberGroup.id })
+      return ownsGroups([groupId]);
+    }
+
+    async function ownsGroups(groupIds: string[]) {
+      if (groupIds.length === 0) return true;
+      const unique = [...new Set(groupIds)];
+      const [{ owned }] = await db
+        .select({ owned: count() })
         .from(memberGroup)
         .where(
           and(
             eq(memberGroup.organiserId, organiserId),
-            eq(memberGroup.id, groupId),
+            inArray(memberGroup.id, unique),
           ),
         );
-      return row !== undefined;
+      return owned === unique.length;
     }
 
     async function ownsMeeting(meetingId: string) {
@@ -95,6 +111,105 @@ export function createOrganiserData({ auth, db }: { auth: Auth; db: Db }) {
           and(eq(member.organiserId, organiserId), inArray(member.id, unique)),
         );
       return owned === unique.length;
+    }
+
+    /**
+     * Who each live Meeting's Attendees are: its individual choices plus the
+     * current Members of its Linked Groups, one row per Member, by name.
+     */
+    async function attendeesOf(meetingIds: string[]) {
+      const individual = await db
+        .select({
+          meetingId: meetingMember.meetingId,
+          memberId: member.id,
+          name: member.name,
+          email: member.email,
+          copiedFrom: { id: memberGroup.id, name: memberGroup.name },
+        })
+        .from(meetingMember)
+        .innerJoin(member, eq(member.id, meetingMember.memberId))
+        .leftJoin(
+          memberGroup,
+          eq(memberGroup.id, meetingMember.copiedFromGroupId),
+        )
+        .where(
+          and(
+            eq(meetingMember.organiserId, organiserId),
+            inArray(meetingMember.meetingId, meetingIds),
+          ),
+        );
+      const linked = await db
+        .select({
+          meetingId: meetingLinkedGroup.meetingId,
+          memberId: member.id,
+          name: member.name,
+          email: member.email,
+          groupId: memberGroup.id,
+          groupName: memberGroup.name,
+        })
+        .from(meetingLinkedGroup)
+        .innerJoin(memberGroup, eq(memberGroup.id, meetingLinkedGroup.groupId))
+        .innerJoin(
+          groupMembership,
+          eq(groupMembership.groupId, meetingLinkedGroup.groupId),
+        )
+        .innerJoin(member, eq(member.id, groupMembership.memberId))
+        .where(
+          and(
+            eq(meetingLinkedGroup.organiserId, organiserId),
+            inArray(meetingLinkedGroup.meetingId, meetingIds),
+          ),
+        )
+        .orderBy(asc(memberGroup.name));
+      const byMeeting = new Map(
+        meetingIds.map((id) => [id, new Map<string, Attendee>()]),
+      );
+      for (const { meetingId, copiedFrom, ...a } of individual) {
+        byMeeting
+          .get(meetingId)!
+          .set(
+            a.memberId,
+            copiedFrom
+              ? { ...a, addedVia: "copy", group: copiedFrom }
+              : { ...a, addedVia: "individual" },
+          );
+      }
+      for (const { meetingId, groupId, groupName, ...a } of linked) {
+        const attendees = byMeeting.get(meetingId)!;
+        if (attendees.has(a.memberId)) continue;
+        attendees.set(a.memberId, {
+          ...a,
+          addedVia: "linked",
+          group: { id: groupId, name: groupName },
+        });
+      }
+      return new Map(
+        [...byMeeting].map(([id, attendees]) => [
+          id,
+          [...attendees.values()].sort((a, b) => a.name.localeCompare(b.name)),
+        ]),
+      );
+    }
+
+    /** Upcoming Meetings with a live link to a Group, soonest first. */
+    async function upcomingLinks() {
+      return db
+        .select({
+          groupId: meetingLinkedGroup.groupId,
+          id: meeting.id,
+          title: meeting.title,
+          startAt: meeting.startAt,
+          timezone: meeting.timezone,
+        })
+        .from(meetingLinkedGroup)
+        .innerJoin(meeting, eq(meeting.id, meetingLinkedGroup.meetingId))
+        .where(
+          and(
+            eq(meetingLinkedGroup.organiserId, organiserId),
+            gt(meeting.startAt, new Date()),
+          ),
+        )
+        .orderBy(asc(meeting.startAt));
     }
 
     return {
@@ -150,7 +265,29 @@ export function createOrganiserData({ auth, db }: { auth: Auth; db: Db }) {
           })
           .from(member)
           .where(and(eq(member.organiserId, organiserId), eq(member.id, id)));
-        return row;
+        if (!row) return undefined;
+        const upcoming = await db
+          .select({
+            id: meeting.id,
+            title: meeting.title,
+            startAt: meeting.startAt,
+            timezone: meeting.timezone,
+          })
+          .from(meeting)
+          .where(
+            and(
+              eq(meeting.organiserId, organiserId),
+              gt(meeting.startAt, new Date()),
+            ),
+          )
+          .orderBy(asc(meeting.startAt));
+        const attendees = await attendeesOf(upcoming.map((m) => m.id));
+        return {
+          ...row,
+          upcomingMeetings: upcoming.filter((m) =>
+            attendees.get(m.id)!.some((a) => a.memberId === id),
+          ),
+        };
       },
 
       async updateMember(
@@ -231,7 +368,7 @@ export function createOrganiserData({ auth, db }: { auth: Auth; db: Db }) {
       },
 
       async groups() {
-        return db
+        const groups = await db
           .select({
             id: memberGroup.id,
             name: memberGroup.name,
@@ -245,6 +382,11 @@ export function createOrganiserData({ auth, db }: { auth: Auth; db: Db }) {
           .where(eq(memberGroup.organiserId, organiserId))
           .groupBy(memberGroup.id)
           .orderBy(asc(memberGroup.name));
+        const links = await upcomingLinks();
+        return groups.map((g) => ({
+          ...g,
+          upcomingMeetingCount: links.filter((l) => l.groupId === g.id).length,
+        }));
       },
 
       async group(id: string) {
@@ -266,7 +408,15 @@ export function createOrganiserData({ auth, db }: { auth: Auth; db: Db }) {
             ),
           )
           .orderBy(asc(member.name));
-        return { ...row, members };
+        const upcomingMeetings = (await upcomingLinks())
+          .filter((l) => l.groupId === id)
+          .map(({ id, title, startAt, timezone }) => ({
+            id,
+            title,
+            startAt,
+            timezone,
+          }));
+        return { ...row, members, upcomingMeetings };
       },
 
       async addToGroup(groupId: string, memberId: string) {
@@ -353,7 +503,10 @@ export function createOrganiserData({ auth, db }: { auth: Auth; db: Db }) {
           notes?: string;
           privateNotes?: string;
         },
-        { memberIds = [] }: { memberIds?: string[] } = {},
+        {
+          memberIds = [],
+          groupIds = [],
+        }: { memberIds?: string[]; groupIds?: string[] } = {},
       ) {
         const title = details.title.trim();
         const fieldErrors: MeetingFieldErrors = {};
@@ -368,7 +521,7 @@ export function createOrganiserData({ auth, db }: { auth: Auth; db: Db }) {
         if (Object.keys(fieldErrors).length > 0) {
           return { ok: false as const, fieldErrors };
         }
-        if (!(await ownsMembers(memberIds))) {
+        if (!(await ownsMembers(memberIds)) || !(await ownsGroups(groupIds))) {
           return { ok: false as const, notFound: true as const };
         }
         const [{ timezone }] = await db
@@ -403,6 +556,20 @@ export function createOrganiserData({ auth, db }: { auth: Auth; db: Db }) {
               target: [meetingMember.meetingId, meetingMember.memberId],
             });
           }
+          if (groupIds.length > 0) {
+            await tx
+              .insert(meetingLinkedGroup)
+              .values(
+                groupIds.map((groupId) => ({
+                  organiserId,
+                  meetingId: row.id,
+                  groupId,
+                })),
+              )
+              .onConflictDoNothing({
+                target: [meetingLinkedGroup.meetingId, meetingLinkedGroup.groupId],
+              });
+          }
           return row;
         });
         return { ok: true as const, meeting: created };
@@ -417,17 +584,37 @@ export function createOrganiserData({ auth, db }: { auth: Auth; db: Db }) {
             startAt: meeting.startAt,
             timezone: meeting.timezone,
             location: meeting.location,
-            attendeeCount: count(meetingMember.memberId),
           })
           .from(meeting)
-          .leftJoin(meetingMember, eq(meetingMember.meetingId, meeting.id))
           .where(eq(meeting.organiserId, organiserId))
-          .groupBy(meeting.id)
           .orderBy(asc(meeting.startAt));
+        const ids = rows.map((m) => m.id);
+        const attendees = await attendeesOf(ids);
+        const links = await db
+          .select({
+            meetingId: meetingLinkedGroup.meetingId,
+            name: memberGroup.name,
+          })
+          .from(meetingLinkedGroup)
+          .innerJoin(memberGroup, eq(memberGroup.id, meetingLinkedGroup.groupId))
+          .where(
+            and(
+              eq(meetingLinkedGroup.organiserId, organiserId),
+              inArray(meetingLinkedGroup.meetingId, ids),
+            ),
+          )
+          .orderBy(asc(memberGroup.name));
+        const listed = rows.map((m) => ({
+          ...m,
+          attendeeCount: attendees.get(m.id)!.length,
+          linkedGroupNames: links
+            .filter((l) => l.meetingId === m.id)
+            .map((l) => l.name),
+        }));
         const now = Date.now();
         return {
-          upcoming: rows.filter((m) => m.startAt.getTime() > now),
-          past: rows.filter((m) => m.startAt.getTime() <= now).reverse(),
+          upcoming: listed.filter((m) => m.startAt.getTime() > now),
+          past: listed.filter((m) => m.startAt.getTime() <= now).reverse(),
         };
       },
 
@@ -446,28 +633,64 @@ export function createOrganiserData({ auth, db }: { auth: Auth; db: Db }) {
           .from(meeting)
           .where(and(eq(meeting.organiserId, organiserId), eq(meeting.id, id)));
         if (!row) return undefined;
-        const attendees = await db
-          .select({
-            memberId: member.id,
-            name: member.name,
-            email: member.email,
-          })
+        const linkedGroups = await db
+          .select({ id: memberGroup.id, name: memberGroup.name })
+          .from(meetingLinkedGroup)
+          .innerJoin(memberGroup, eq(memberGroup.id, meetingLinkedGroup.groupId))
+          .where(
+            and(
+              eq(meetingLinkedGroup.organiserId, organiserId),
+              eq(meetingLinkedGroup.meetingId, id),
+            ),
+          )
+          .orderBy(asc(memberGroup.name));
+        const copiedGroups = await db
+          .selectDistinct({ id: memberGroup.id, name: memberGroup.name })
           .from(meetingMember)
-          .innerJoin(member, eq(member.id, meetingMember.memberId))
+          .innerJoin(
+            memberGroup,
+            eq(memberGroup.id, meetingMember.copiedFromGroupId),
+          )
           .where(
             and(
               eq(meetingMember.organiserId, organiserId),
               eq(meetingMember.meetingId, id),
             ),
-          )
-          .orderBy(asc(member.name));
+          );
         return {
           ...row,
-          attendees: attendees.map((a) => ({
-            ...a,
-            addedVia: "individual" as const,
-          })),
+          linkedGroups: [
+            ...linkedGroups.map((g) => ({ ...g, kind: "live" as const })),
+            ...copiedGroups.map((g) => ({ ...g, kind: "copy" as const })),
+          ].sort((a, b) => a.name.localeCompare(b.name)),
+          attendees: (await attendeesOf([id])).get(id)!,
         };
+      },
+
+      async linkGroup(meetingId: string, groupId: string) {
+        if (!(await ownsMeeting(meetingId)) || !(await ownsGroup(groupId))) {
+          return { ok: false as const, notFound: true as const };
+        }
+        await db
+          .insert(meetingLinkedGroup)
+          .values({ organiserId, meetingId, groupId })
+          // Already linked (a double submit): done.
+          .onConflictDoNothing({
+            target: [meetingLinkedGroup.meetingId, meetingLinkedGroup.groupId],
+          });
+        return { ok: true as const };
+      },
+
+      async unlinkGroup(meetingId: string, groupId: string) {
+        await db
+          .delete(meetingLinkedGroup)
+          .where(
+            and(
+              eq(meetingLinkedGroup.organiserId, organiserId),
+              eq(meetingLinkedGroup.meetingId, meetingId),
+              eq(meetingLinkedGroup.groupId, groupId),
+            ),
+          );
       },
 
       async addAttendee(meetingId: string, memberId: string) {
@@ -484,16 +707,92 @@ export function createOrganiserData({ auth, db }: { auth: Auth; db: Db }) {
         return { ok: true as const };
       },
 
-      async removeAttendee(meetingId: string, memberId: string) {
-        await db
-          .delete(meetingMember)
+      /**
+       * A Member who came through a Linked Group is only removed once the
+       * Organiser repeats it with `confirmCopy`.
+       */
+      async removeAttendee(
+        meetingId: string,
+        memberId: string,
+        { confirmCopy = false }: { confirmCopy?: boolean } = {},
+      ) {
+        if (!(await ownsMeeting(meetingId))) {
+          return { ok: false as const, notFound: true as const };
+        }
+        const coveringGroups = await db
+          .select({ id: memberGroup.id, name: memberGroup.name })
+          .from(meetingLinkedGroup)
+          .innerJoin(memberGroup, eq(memberGroup.id, meetingLinkedGroup.groupId))
+          .innerJoin(
+            groupMembership,
+            and(
+              eq(groupMembership.groupId, meetingLinkedGroup.groupId),
+              eq(groupMembership.memberId, memberId),
+            ),
+          )
           .where(
             and(
-              eq(meetingMember.organiserId, organiserId),
-              eq(meetingMember.meetingId, meetingId),
-              eq(meetingMember.memberId, memberId),
+              eq(meetingLinkedGroup.organiserId, organiserId),
+              eq(meetingLinkedGroup.meetingId, meetingId),
             ),
-          );
+          )
+          .orderBy(asc(memberGroup.name));
+        if (coveringGroups.length > 0 && !confirmCopy) {
+          return {
+            ok: false as const,
+            confirmCopy: { groups: coveringGroups },
+          };
+        }
+        await db.transaction(async (tx) => {
+          // Each covering link becomes a copy of the rest of its Group.
+          for (const group of coveringGroups) {
+            await tx
+              .delete(meetingLinkedGroup)
+              .where(
+                and(
+                  eq(meetingLinkedGroup.organiserId, organiserId),
+                  eq(meetingLinkedGroup.meetingId, meetingId),
+                  eq(meetingLinkedGroup.groupId, group.id),
+                ),
+              );
+            const rest = await tx
+              .select({ memberId: groupMembership.memberId })
+              .from(groupMembership)
+              .where(
+                and(
+                  eq(groupMembership.organiserId, organiserId),
+                  eq(groupMembership.groupId, group.id),
+                ),
+              );
+            const copies = rest.filter((m) => m.memberId !== memberId);
+            if (copies.length > 0) {
+              await tx
+                .insert(meetingMember)
+                .values(
+                  copies.map((m) => ({
+                    organiserId,
+                    meetingId,
+                    memberId: m.memberId,
+                    copiedFromGroupId: group.id,
+                  })),
+                )
+                // Already chosen individually or copied: keep that.
+                .onConflictDoNothing({
+                  target: [meetingMember.meetingId, meetingMember.memberId],
+                });
+            }
+          }
+          await tx
+            .delete(meetingMember)
+            .where(
+              and(
+                eq(meetingMember.organiserId, organiserId),
+                eq(meetingMember.meetingId, meetingId),
+                eq(meetingMember.memberId, memberId),
+              ),
+            );
+        });
+        return { ok: true as const };
       },
     };
   };

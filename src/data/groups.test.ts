@@ -17,7 +17,7 @@ describe("Groups", () => {
 
     expect(created.ok).toBe(true);
     expect(await data.groups()).toEqual([
-      { id: expect.any(String), name: "Choir", memberCount: 0 },
+      { id: expect.any(String), name: "Choir", memberCount: 0, upcomingMeetingCount: 0 },
     ]);
   });
 
@@ -48,9 +48,10 @@ describe("Groups", () => {
       id: choir.group.id,
       name: "Choir",
       members: [{ id: ann.member.id, name: "Ann Lee", email: "ann@x.com" }],
+      upcomingMeetings: [],
     });
     expect(await data.groups()).toEqual([
-      { id: choir.group.id, name: "Choir", memberCount: 1 },
+      { id: choir.group.id, name: "Choir", memberCount: 1, upcomingMeetingCount: 0 },
     ]);
   });
 
@@ -191,7 +192,7 @@ describe("Groups", () => {
     expect(await grace.group(adasChoir.group.id)).toBeUndefined();
     expect((await grace.groups()).map((g) => g.name)).toEqual(["Band"]);
     expect(await ada.groups()).toEqual([
-      { id: adasChoir.group.id, name: "Choir", memberCount: 0 },
+      { id: adasChoir.group.id, name: "Choir", memberCount: 0, upcomingMeetingCount: 0 },
     ]);
   });
 
@@ -211,3 +212,45 @@ describe("Groups", () => {
     expect(await grace.members()).toEqual([]);
   });
 });
+
+describe("Groups linked to Meetings", () => {
+  it("counts and lists the upcoming Meetings linking a Group, leaving out past ones", async () => {
+    const app = await createTestApp();
+    const data = await signedInOrganiser(app);
+    const choir = await data.createGroup("Choir");
+    const upcoming = await data.createMeeting(
+      { title: "Concert", date: "2099-07-01", time: "19:30" },
+      { groupIds: choir.ok ? [choir.group.id] : [] },
+    );
+    const past = await data.createMeeting(
+      { title: "Launch", date: "2001-01-10", time: "09:00" },
+      { groupIds: choir.ok ? [choir.group.id] : [] },
+    );
+    const unlinked = await data.createMeeting({
+      title: "Rehearsal",
+      date: "2099-06-01",
+      time: "19:30",
+    });
+    if (!choir.ok || !upcoming.ok || !past.ok || !unlinked.ok) {
+      throw new Error("setup failed");
+    }
+
+    expect(await data.groups()).toEqual([
+      {
+        id: choir.group.id,
+        name: "Choir",
+        memberCount: 0,
+        upcomingMeetingCount: 1,
+      },
+    ]);
+    expect((await data.group(choir.group.id))?.upcomingMeetings).toEqual([
+      {
+        id: upcoming.meeting.id,
+        title: "Concert",
+        startAt: new Date("2099-07-01T19:30:00Z"),
+        timezone: "UTC",
+      },
+    ]);
+  });
+});
+

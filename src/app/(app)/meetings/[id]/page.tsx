@@ -2,10 +2,12 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireOrganiserData } from "@/app-context";
 import { formatInZone } from "@/timezone";
-import { removeAttendee } from "../actions";
-import { AttendeeTable } from "../attendee-table";
+import { unlinkGroup } from "../actions";
+import { AttendeeTable, LinkedGroupChips } from "../attendee-table";
 import { AddAttendeeForm } from "./add-attendee-form";
+import { AddGroupForm } from "./add-group-form";
 import { CopyEmailsButton } from "./copy-emails-button";
+import { RemoveAttendeeButton } from "./remove-attendee-button";
 
 export default async function MeetingPage({
   params,
@@ -19,6 +21,12 @@ export default async function MeetingPage({
   const attending = new Set(meeting.attendees.map((a) => a.memberId));
   const candidates = (await data.members()).filter(
     (m) => !attending.has(m.id),
+  );
+  const linked = new Set(
+    meeting.linkedGroups.filter((g) => g.kind === "live").map((g) => g.id),
+  );
+  const groupCandidates = (await data.groups()).filter(
+    (g) => !linked.has(g.id),
   );
 
   return (
@@ -63,13 +71,22 @@ export default async function MeetingPage({
       </dl>
 
       <h2>Attendees</h2>
-      <AddAttendeeForm meetingId={meeting.id} candidates={candidates} />
+      <div className="add-rows">
+        <AddAttendeeForm meetingId={meeting.id} candidates={candidates} />
+        <AddGroupForm meetingId={meeting.id} candidates={groupCandidates} />
+      </div>
+      <LinkedGroupChips
+        groups={meeting.linkedGroups}
+        removeControl={(groupId, name) => (
+          <form action={unlinkGroup.bind(null, meeting.id, groupId)}>
+            <button aria-label={`Remove the Group ${name}`}>×</button>
+          </form>
+        )}
+      />
       <AttendeeTable
         attendees={meeting.attendees}
-        removeControl={(memberId) => (
-          <form action={removeAttendee.bind(null, meeting.id, memberId)}>
-            <button className="link-button">Remove</button>
-          </form>
+        removeControl={(attendee) => (
+          <RemoveAttendeeButton meetingId={meeting.id} attendee={attendee} />
         )}
       />
       {meeting.attendees.length > 0 && (

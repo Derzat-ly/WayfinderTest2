@@ -1,6 +1,11 @@
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { groupMembership, meetingMember, user } from "@/db/schema";
+import {
+  groupMembership,
+  meetingLinkedGroup,
+  meetingMember,
+  user,
+} from "@/db/schema";
 import { createTestApp } from "@/test/test-app";
 
 describe("the database schema", () => {
@@ -72,5 +77,39 @@ describe("the database schema", () => {
       }),
     });
     expect(await app.db.select().from(meetingMember)).toEqual([]);
+  });
+
+  it("refuses a Linked Group row that puts one Organiser's name on another's Meeting", async () => {
+    const app = await createTestApp();
+    const ada = await app.organiserData(
+      await app.signUp({ name: "Ada", email: "ada@example.com" }),
+    );
+    const grace = await app.organiserData(
+      await app.signUp({ name: "Grace", email: "grace@example.com" }),
+    );
+    const adasChoir = await ada.createGroup("Choir");
+    const gracesMeeting = await grace.createMeeting({
+      title: "Concert",
+      date: "2099-07-01",
+      time: "19:30",
+    });
+    if (!adasChoir.ok || !gracesMeeting.ok) throw new Error("setup failed");
+    const [{ id: adaId }] = await app.db
+      .select({ id: user.id })
+      .from(user)
+      .where(eq(user.email, "ada@example.com"));
+
+    const insert = app.db.insert(meetingLinkedGroup).values({
+      organiserId: adaId,
+      meetingId: gracesMeeting.meeting.id,
+      groupId: adasChoir.group.id,
+    });
+
+    await expect(insert).rejects.toMatchObject({
+      cause: expect.objectContaining({
+        message: expect.stringContaining("FOREIGN KEY constraint failed"),
+      }),
+    });
+    expect(await app.db.select().from(meetingLinkedGroup)).toEqual([]);
   });
 });

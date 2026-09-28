@@ -3,9 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { requireOrganiserData } from "@/app-context";
 
+/** Membership reaches Groups, Members and, through Linked Groups, Meetings. */
 function revalidateMembership() {
-  revalidatePath("/groups", "layout");
-  revalidatePath("/members", "layout");
+  revalidatePath("/", "layout");
 }
 
 export type CreateGroupState = {

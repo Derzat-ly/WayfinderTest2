@@ -188,6 +188,35 @@ export const meeting = sqliteTable(
 );
 
 /**
+ * A Group added whole to a Meeting. Live until the Meeting starts, then the
+ * frozen record, which is when `group_name` is filled.
+ */
+export const meetingLinkedGroup = sqliteTable(
+  "meeting_linked_group",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organiserId: text("organiser_id").notNull(),
+    meetingId: text("meeting_id").notNull(),
+    /** Single-column so a Group delete nulls only this. */
+    groupId: text("group_id").references(() => memberGroup.id, {
+      onDelete: "set null",
+    }),
+    groupName: text("group_name"),
+    ...timestamps,
+  },
+  (t) => [
+    unique().on(t.meetingId, t.groupId),
+    foreignKey({
+      columns: [t.organiserId, t.meetingId],
+      foreignColumns: [meeting.organiserId, meeting.id],
+    }).onDelete("cascade"),
+    index("meeting_linked_group_group_id_idx").on(t.groupId),
+  ],
+);
+
+/**
  * Members chosen individually for a Meeting, whether added one by one or
  * copied from a Linked Group. The composite foreign keys make the database
  * refuse one Organiser's Meeting with another's Member.

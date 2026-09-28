@@ -1,16 +1,20 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import type { Attendee } from "@/data/organiser-data";
 import { createMeeting } from "../actions";
-import { AttendeeTable } from "../attendee-table";
+import { AttendeeTable, LinkedGroupChips } from "../attendee-table";
 
-type Member = { id: string; name: string; email: string };
+type Member = { id: string; name: string; email: string; groupIds: string[] };
+type Group = { id: string; name: string };
 
 export function NewMeetingForm({
   members,
+  groups,
   timezone,
 }: {
   members: Member[];
+  groups: Group[];
   /** The Organiser's timezone, which the Meeting will keep a copy of. */
   timezone: string;
 }) {
@@ -22,10 +26,43 @@ export function NewMeetingForm({
   const pickedIds = new Set(picked.map((m) => m.id));
   const candidates = members.filter((m) => !pickedIds.has(m.id));
 
+  const [pickedGroups, setPickedGroups] = useState<Group[]>([]);
+  const [groupChoice, setGroupChoice] = useState("");
+  const pickedGroupIds = new Set(pickedGroups.map((g) => g.id));
+  const groupCandidates = groups.filter((g) => !pickedGroupIds.has(g.id));
+
   function addPicked() {
     const member = candidates.find((m) => m.id === choice);
     if (member) setPicked([...picked, member]);
     setChoice("");
+  }
+
+  function addPickedGroup() {
+    const group = groupCandidates.find((g) => g.id === groupChoice);
+    if (group) {
+      setPickedGroups(
+        [...pickedGroups, group].sort((a, b) => a.name.localeCompare(b.name)),
+      );
+    }
+    setGroupChoice("");
+  }
+
+  // The same rule the data module applies once the Meeting exists.
+  const attendees = new Map<string, Attendee>();
+  for (const { id, name, email } of picked) {
+    attendees.set(id, { memberId: id, name, email, addedVia: "individual" });
+  }
+  for (const group of pickedGroups) {
+    for (const { id, name, email, groupIds } of members) {
+      if (attendees.has(id) || !groupIds.includes(group.id)) continue;
+      attendees.set(id, {
+        memberId: id,
+        name,
+        email,
+        addedVia: "linked",
+        group,
+      });
+    }
   }
 
   return (
@@ -97,6 +134,10 @@ export function NewMeetingForm({
       {picked.map((m) => (
         <input key={m.id} type="hidden" name="memberId" value={m.id} />
       ))}
+      {pickedGroups.map((g) => (
+        <input key={g.id} type="hidden" name="groupId" value={g.id} />
+      ))}
+      <div className="add-rows">
       {candidates.length > 0 && (
         <div className="add-row">
           <label className="field">
@@ -120,21 +161,69 @@ export function NewMeetingForm({
           </button>
         </div>
       )}
-      <AttendeeTable
-        attendees={picked.map(({ id, ...m }) => ({ memberId: id, ...m }))}
-        removeControl={(memberId) => (
+      {groupCandidates.length > 0 && (
+        <div className="add-row">
+          <label className="field">
+            Add a whole Group
+            <select
+              value={groupChoice}
+              onChange={(e) => setGroupChoice(e.target.value)}
+            >
+              <option value="">Choose a Group…</option>
+              {groupCandidates.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name}
+                </option>
+              ))}
+            </select>
+          </label>
           <button
             type="button"
-            className="link-button"
-            onClick={() => setPicked(picked.filter((m) => m.id !== memberId))}
+            className="button"
+            onClick={addPickedGroup}
+            disabled={!groupChoice}
           >
-            Remove
+            Add
+          </button>
+        </div>
+      )}
+      </div>
+      <LinkedGroupChips
+        groups={pickedGroups.map((g) => ({ ...g, kind: "live" as const }))}
+        removeControl={(groupId, name) => (
+          <button
+            type="button"
+            aria-label={`Remove the Group ${name}`}
+            onClick={() =>
+              setPickedGroups(pickedGroups.filter((g) => g.id !== groupId))
+            }
+          >
+            ×
           </button>
         )}
       />
+      <AttendeeTable
+        attendees={[...attendees.values()].sort((a, b) =>
+          a.name.localeCompare(b.name),
+        )}
+        removeControl={(attendee) =>
+          // Before the Meeting exists, a Group's Members go with its chip.
+          attendee.addedVia === "individual" && (
+            <button
+              type="button"
+              className="link-button"
+              onClick={() =>
+                setPicked(picked.filter((m) => m.id !== attendee.memberId))
+              }
+            >
+              Remove
+            </button>
+          )
+        }
+      />
       {state.notFound && (
         <p className="error" role="alert">
-          One of those Members no longer exists. Reload the page and try again.
+          One of those Members or Groups no longer exists. Reload the page and try again.
         </p>
       )}
       <button className="button" disabled={pending}>

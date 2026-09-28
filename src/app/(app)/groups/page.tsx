@@ -17,6 +17,7 @@ export default async function GroupsPage() {
             <tr>
               <th>Name</th>
               <th>Members</th>
+              <th>Upcoming Meetings linking it</th>
             </tr>
           </thead>
           <tbody>
@@ -26,6 +27,7 @@ export default async function GroupsPage() {
                   <Link href={`/groups/${group.id}`}>{group.name}</Link>
                 </td>
                 <td>{group.memberCount}</td>
+                <td>{group.upcomingMeetingCount}</td>
               </tr>
             ))}
           </tbody>

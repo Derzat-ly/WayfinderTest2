@@ -1,13 +1,14 @@
 import type { ReactNode } from "react";
+import type { Attendee } from "@/data/organiser-data";
 
 /** The live Attendee table on the New meeting form and the Meeting page. */
 export function AttendeeTable({
   attendees,
   removeControl,
 }: {
-  attendees: { memberId: string; name: string; email: string }[];
+  attendees: Attendee[];
   /** The Remove button for one Attendee. */
-  removeControl: (memberId: string) => ReactNode;
+  removeControl: (attendee: Attendee) => ReactNode;
 }) {
   if (attendees.length === 0) {
     return <p className="hint">No Attendees yet.</p>;
@@ -28,12 +29,50 @@ export function AttendeeTable({
             <td>{attendee.name}</td>
             <td>{attendee.email}</td>
             <td>
-              <span className="badge">added individually</span>
+              <AddedBadge attendee={attendee} />
             </td>
-            <td>{removeControl(attendee.memberId)}</td>
+            <td>{removeControl(attendee)}</td>
           </tr>
         ))}
       </tbody>
     </table>
+  );
+}
+
+function AddedBadge({ attendee }: { attendee: Attendee }) {
+  switch (attendee.addedVia) {
+    case "individual":
+      return <span className="badge">added individually</span>;
+    case "linked":
+      return (
+        <span className="badge badge-live">{attendee.group.name} · live</span>
+      );
+    case "copy":
+      return (
+        <span className="badge badge-copy">{attendee.group.name} · copy</span>
+      );
+  }
+}
+
+/** The Linked Groups on a Meeting: green while live, amber once a copy. */
+export function LinkedGroupChips({
+  groups,
+  removeControl,
+}: {
+  groups: { id: string; name: string; kind: "live" | "copy" }[];
+  /** The × button for one live chip. */
+  removeControl: (groupId: string, name: string) => ReactNode;
+}) {
+  if (groups.length === 0) return null;
+  return (
+    <ul className="chips" aria-label="Linked Groups">
+      {groups.map((group) => (
+        <li key={group.id} className={`chip chip-${group.kind}`}>
+          {group.name}
+          {group.kind === "copy" && <span> · copy</span>}
+          {group.kind === "live" && removeControl(group.id, group.name)}
+        </li>
+      ))}
+    </ul>
   );
 }

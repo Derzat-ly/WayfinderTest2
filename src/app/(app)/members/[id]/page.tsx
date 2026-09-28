@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireOrganiserData } from "@/app-context";
+import { formatInZone } from "@/timezone";
 import { EditMemberForm } from "./edit-member-form";
 import { GroupCheckboxes } from "./group-checkboxes";
 
@@ -23,6 +24,21 @@ export default async function MemberPage({
       <h1>{member.name}</h1>
       <EditMemberForm member={member} />
       <GroupCheckboxes memberId={member.id} choices={groupChoices} />
+      <h2>Upcoming Meetings</h2>
+      {member.upcomingMeetings.length === 0 ? (
+        <p className="hint">Not on any upcoming Meetings.</p>
+      ) : (
+        <ul>
+          {member.upcomingMeetings.map((m) => (
+            <li key={m.id}>
+              <Link href={`/meetings/${m.id}`}>{m.title}</Link>{" "}
+              <span className="hint">
+                {formatInZone(m.startAt, m.timezone)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
     </>
   );
 }
